@@ -77,7 +77,7 @@ lml = log_marginal_likelihood(log_params, X_train, y_train.flatten())
 print(f"MyGP: Optimized hyperparameters: length_scale = {optimized_params[0]}, sigma = {optimized_params[1]}")
 
 K = Knl(X_train, X_train, *optimized_params)
-L = np.linalg.cholesky(K + 0.000001 * np.eye(len(X_train)))
+L = np.linalg.cholesky(K + 0.001 * np.eye(len(X_train)))
 
 # Step 3: Compute alpha, same as K^(-1)*y
 alpha = np.linalg.solve(L.T, np.linalg.solve(L, y_train))
