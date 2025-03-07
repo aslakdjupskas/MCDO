@@ -5,6 +5,14 @@ from jax.scipy.linalg import cholesky, solve
 import numpy as np
 from scipy.linalg import solve_triangular
 
+from jax import config
+config.update("jax_enable_x64", True)
+
+import gpjax as gpx
+from jax import random as jr
+import jax.numpy as jnp
+import optax as ox
+
 def kernel(X1, X2, length_scale, sigma):
     """Exponentiated quadratic (RBF) kernel."""
 
@@ -45,7 +53,7 @@ def log_marginal_likelihood(log_params, X_train, y_train, noise_variance=1e-3):
 
     # Compute log marginal likelihood
     
-    log_lml = -0.5 * jnp.dot(y_train, alpha) - jnp.sum(jnp.log(jnp.diagonal(L) + 1e-6)) - 0.5 * X_train.shape[0] * jnp.log(2 * jnp.pi)
+    log_lml = -0.5 * jnp.dot(y_train, alpha) - jnp.sum(jnp.log(jnp.diagonal(L) + 1e-6)) - 0.5 * X_train.shape[0] * jnp.log(2 * jnp.pi)+ 1/(length_scale+sigma)
     
     return -log_lml  # Return negative LML for minimization
 
@@ -138,25 +146,48 @@ def save_posterior_plot(fm, fv, X_train, y_train, X_test, loss, j):
     plt.close()
 
 # create artificial regression dataset
-def get_data(N=50, D_X=3, sigma_obs=0.05, N_test=500):
-    D_Y = 1  # create 1d outputs
+def get_data(N=50, D_X=3, sigma_obs=0.05, N_test=500, gap=False):
+    D_Y = 1  # Create 1D outputs
     np.random.seed(0)
-    X = jnp.linspace(-1, 1, N)
-    X = jnp.power(X[:, np.newaxis], jnp.arange(D_X))
-    W = 0.5 * np.random.randn(D_X)
-    Y = jnp.dot(X, W) + 0.5 * jnp.power(0.5 + X[:, 1], 2.0) * jnp.sin(4.0 * X[:, 1])
-    Y += sigma_obs * np.random.randn(N)
-    Y = Y[:, np.newaxis]
-    Y -= jnp.mean(Y)
-    Y /= jnp.std(Y)
-
-    assert X.shape == (N, D_X)
-    assert Y.shape == (N, D_Y)
-
+    
+    # Generate test data first
     X_test = jnp.linspace(-1.3, 1.3, N_test)
     X_test = jnp.power(X_test[:, np.newaxis], jnp.arange(D_X))
+    
+    # Define ground truth function
+    W = 0.5 * np.random.randn(D_X)
+    Y_true = jnp.dot(X_test, W) + 0.5 * jnp.power(0.5 + X_test[:, 1], 2.0) * jnp.sin(4.0 * X_test[:, 1])
+    Y_true = Y_true[:, np.newaxis]
+    Y_true -= jnp.mean(Y_true)
+    Y_true /= jnp.std(Y_true)
+    
+    # Apply gap only if enabled
+    if gap:
+        mask = (X_test[:, 1] < -0.5) | (X_test[:, 1] > 0.5)
+        X_available = X_test[mask]
+        Y_available = Y_true[mask]
+    else:
+        X_available = X_test
+        Y_available = Y_true
+    
+    # Ensure X and Y are within the range [-1,1] **before selecting indices**
+    valid_mask = (X_available[:, 1] >= -1.0) & (X_available[:, 1] <= 1.0)
+    X_available = X_available[valid_mask]
+    Y_available = Y_available[valid_mask]
 
-    return X, Y, X_test
+    # Now we are guaranteed to sample only from valid points
+    if len(X_available) < N:
+        raise ValueError(f"Not enough valid samples ({len(X_available)}) to select N={N}.")
+
+    indices = np.linspace(0, len(X_available) - 1, N, dtype=int)
+    X = X_available[indices]
+    Y = Y_available[indices] + sigma_obs * np.random.randn(N, D_Y)
+    assert X.shape == (N, D_X)
+    assert Y.shape == (N, D_Y)
+    assert X_test.shape == (N_test, D_X)
+    assert Y_true.shape == (N_test, D_Y)
+    
+    return X, Y, X_test, Y_true
 
 
 
@@ -170,8 +201,8 @@ if __name__ == "__main__":
     # y = np.sin(X).flatten() *  (X.flatten()**2/5) # True function
     # y = np.sin(X).flatten() + (X.flatten()/9) + np.random.uniform(-1,1) # True function
 
-    N, D_X, D_H = 100, 3, 5
-    X, Y, X_test = get_data(N=N, D_X=D_X, N_test=n_samples)
+    N, D_X, D_H = 50, 3, 5
+    X, Y, X_test, Y_true = get_data(N=N, D_X=D_X, N_test=n_samples, gap=False)
     X_train = X[:,1]; y_train = Y[:,0]; X_test = X_test[:,1]
     
     # plt.figure()
@@ -193,7 +224,7 @@ if __name__ == "__main__":
     init_params = (10.0, 10.0) # (length_scale, sigma)
 
     # Optimize hyperparameters
-    optimized_params = optimize_hyperparameters(X_train, y_train, X_test, init_params, learning_rate=0.00015, num_iters=500)
+    optimized_params = optimize_hyperparameters(X_train, y_train, X_test, init_params, learning_rate=0.000075, num_iters=2000)
 
     print(f"Optimized hyperparameters: length_scale = {optimized_params[0]}, sigma = {optimized_params[1]}")
 
@@ -211,7 +242,12 @@ if __name__ == "__main__":
     K_test_test = kernel(X_test, X_test, *optimized_params)  # Covariance of test points
     v = np.linalg.solve(L, K_train_test)
     f_var_opt = K_test_test - v.T@v
-    f_var_opt = (f_var_opt @ f_var_opt.T) /2
+    var_norm = np.linalg.norm(f_var_opt)
+    f_var_opt = (f_var_opt @ f_var_opt.T)/(var_norm**2)
+
+    D = np.diag(1/(2 *np.sqrt(np.diag(f_var_opt))))
+    f_var_opt = (f_var_opt @ D)
+
 
     # Without optimization
     Kw = kernel(X_train, X_train, *init_params)
@@ -226,50 +262,113 @@ if __name__ == "__main__":
     K_test_test = kernel(X_test, X_test, *init_params)  # Covariance of test points
     vw = np.linalg.solve(Lw, K_train_test)
     f_var = K_test_test - vw.T@vw
+    f_var = (f_var @ f_var.T)
+
+    # GP Jax
+    # dataset
+    key = jr.PRNGKey(123)
+    np.random.seed(8)
+    # X_train = X[:,1].reshape(-1,1); y_train = Y[:,0].reshape(-1,1); X_test = X_test[:,1].reshape(-1,1)
+
+    # dataset
+    D = gpx.Dataset(X=X_train.reshape(-1,1), y=y_train.reshape(-1,1))
+
+    # prior
+    meanf = gpx.mean_functions.Zero()  # Zero mean 
+    kernel = gpx.kernels.RBF()  # RBF kernel
+    # kernel = gpx.kernels.Matern32(lengthscale=10., variance=10.)
+
+
+    prior = gpx.gps.Prior(mean_function=meanf, kernel=kernel)
+
+    # Define the likelihood 
+    likelihood = gpx.likelihoods.Gaussian(num_datapoints=15)
+
+    # Combine prior and likelihood to form posterior
+    posterior = prior * likelihood
+
+    # Define optimizer
+    optimizer = ox.adam(learning_rate=1e-2)
+    # optimizer = ox.sgd(learning_rate=0.002)
+
+
+    # Fit the model to the training data using MLE optimization
+    opt_posterior, history = gpx.fit(
+        model=posterior,
+        objective=lambda p, d: -gpx.objectives.conjugate_mll(p, d),
+        train_data=D,
+        optim=optimizer,
+        num_iters=8000,
+        safe=True,
+        key=key,
+    )
+
+    # Predict on test points
+    latent_dist = opt_posterior(X_test.reshape(-1,1), D)
+    predictive_dist = opt_posterior.likelihood(latent_dist)
+
+    # Obtain predictive mean and std
+    pred_mean = predictive_dist.mean()
+    pred_std = predictive_dist.stddev()
+    # cov matrix
+    cov_matrix = predictive_dist.covariance()
+    
+    opt_params = (opt_posterior.prior.kernel.lengthscale.value, opt_posterior.prior.kernel.variance.value)
+
 
     # plot the posterior samples
-    X = X.flatten()
-    X_test = X_test.flatten()
     
-    fig, axes = plt.subplots(2, 1, figsize=(10, 12))
-    fig.suptitle("Posterior Samples from Gaussian Process", fontsize=16)
+    fig, axes = plt.subplots(1, 2, figsize=(20, 12))
+    # fig.suptitle("Posterior Samples from Gaussian Process", fontsize=16, fontweight='bold')
 
     # Generate samples and plot from the posterior
-    num_samples = 15
+    num_samples = 50
     for i in range(num_samples):
-        axes[0].plot(X_test, np.random.multivariate_normal(f_mean_opt, f_var_opt), color='black', alpha=0.1)  # Plot the posterior samples
+        axes[0].plot(X_test, np.random.multivariate_normal(f_mean_opt, f_var_opt), color='gray', alpha=0.1)
+          # Plot the posterior samples
     axes[0].plot(X_test, f_mean_opt, color='black', label="Predictive Mean", linewidth=2)
-    axes[0].fill_between(
-        X_test, 
-        f_mean_opt - 2 * np.sqrt(np.diagonal(f_var_opt)), 
-        f_mean_opt + 2 * np.sqrt(np.diagonal(f_var_opt)), 
-        color='gray', alpha=0.2, label="95% Confidence Interval"
-    )
-    axes[0].plot(X_train, y_train, "r.", label="Training Points")
+    axes[0].fill_between(X_test, f_mean_opt - 2 * np.sqrt(var_norm*np.diagonal(f_var_opt)), f_mean_opt + 2 * np.sqrt(var_norm * np.diagonal(f_var_opt)), color="lightblue", label="95% CI")
+    axes[0].plot(X_test, Y_true, "k--", lw=2.0, label="True function")
+    axes[0].plot(X_train, y_train, "r.", label="Train Data", alpha=0.5)
     # axes[0].plot(X, y, "m-", label="True function")
     axes[0].legend()
-    axes[0].set_title("\nOptimized RBF Kernel")
-    axes[0].set_xlabel("x")
-    axes[0].set_ylabel("f(x)")
-    axes[0].set_ylim(top=8, bottom=-6)
+    axes[0].set_title(f"\n\nMyGP (Self implemented) \nLengthscale: {optimized_params[0]:.2f}, Variance: {optimized_params[1]:.2f}\n")
+    axes[0].set_xlabel("X")
+    axes[0].set_ylabel("Y")
+    axes[0].set_ylim(top=4, bottom=-4)
+    axes[0].grid()
+
+    axes[1].set_title(f"\n\nGP Jax \nLengthscale: {opt_params[0]:.2f}, Variance: {opt_params[1]:.2f}\n")
+    for _ in range(num_samples):
+        axes[1].plot(X_test, np.random.multivariate_normal(pred_mean.flatten(), cov_matrix), alpha=0.1, color='gray')  # Plot the posterior samples
+    axes[1].plot(X[:,1], Y[:,0], 'r.', label="Train Data", alpha=0.5)
+    axes[1].plot(X_test, pred_mean, label="Mean Prediction", color="black", linewidth=2)
+    axes[1].plot(X_test, Y_true, "k--", lw=2.0, label="True function")
+    axes[1].fill_between(X_test, pred_mean - 2*pred_std, pred_mean + 2*pred_std, color="lightblue", label="95% CI")
+    axes[1].legend()
+    axes[1].set_ylim(top=4, bottom=-4)
+    axes[1].set_xlabel("X")
+    axes[1].set_ylabel("Y")
+    axes[1].grid()
 
 
     # Second plot
-    for i in range(num_samples):
-        axes[1].plot(X_test, np.random.multivariate_normal(f_mean, f_var), color='black', alpha=0.1)  # Plot the posterior samples
-    axes[1].plot(X_test, f_mean, color='black', label="Predictive Mean", linewidth=2)
-    axes[1].fill_between(
-        X_test, 
-        f_mean - 2 * np.sqrt(np.diagonal(f_var)), 
-        f_mean + 2 * np.sqrt(np.diagonal(f_var)), 
-        color='gray', alpha=0.2, label="95% Confidence Interval"
-    )
-    axes[1].plot(X_train, y_train, "r.", label="Training Points")
-    # axes[1].plot(X, y, "m-", label="True function")
-    axes[1].legend()
-    axes[1].set_title("\nNon optimized RBF Kernel")
-    axes[1].set_xlabel("x")
-    axes[1].set_ylabel("f(x)")
+    # for i in range(num_samples):
+    #     axes[1].plot(X_test, np.random.multivariate_normal(f_mean, f_var), color='black', alpha=0.1)  # Plot the posterior samples
+    # axes[1].plot(X_test, f_mean, color='black', label="Predictive Mean", linewidth=2)
+    # axes[1].fill_between(
+    #     X_test, 
+    #     f_mean - 2 * np.sqrt(np.diagonal(f_var)), 
+    #     f_mean + 2 * np.sqrt(np.diagonal(f_var)), 
+    #     color='gray', alpha=0.2, label="95% Confidence Interval"
+    # )
+    # axes[1].plot(X_train, y_train, "r.", label="Training Points")
+    # # axes[1].plot(X, y, "m-", label="True function")
+    # axes[1].legend()
+    # axes[1].set_title("\nNon optimized RBF Kernel")
+    # axes[1].set_xlabel("x")
+    # axes[1].set_ylabel("f(x)")
+    # axes[1].set_ylim(top=4, bottom=-4)
 
     plt.tight_layout()
     
