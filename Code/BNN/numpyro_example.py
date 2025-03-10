@@ -127,6 +127,14 @@ def get_data(N=50, D_X=3, sigma_obs=0.05, N_test=500, gap=True):
     return X, Y, X_test, Y_true
 
 
+#  helper function for prediction
+def predict(model, rng_key, samples, X, D_H):
+    model = handlers.substitute(handlers.seed(model, rng_key), samples)
+    # note that Y will be sampled in the model because we pass Y=None here
+    model_trace = handlers.trace(model).get_trace(X=X, Y=None, D_H=D_H)
+    return model_trace["Y"]["value"]
+
+
 def forward(X_test, samples, n):
     predictions = []
     for i in range(n):
@@ -148,23 +156,34 @@ def forward(X_test, samples, n):
 
 def main(args):
     N, D_X, D_H = args.num_data, 3, args.num_hidden
-    X, Y, X_test, Y_true = get_data(N=N, D_X=D_X)
+    X, Y, X_test, Y_true = get_data(N=N, D_X=D_X, N_test=500, gap=True)
     # X_test = jnp.ones_like(X_test)
     # do inference
     rng_key, rng_key_predict = random.split(random.PRNGKey(0))
     samples = run_inference(model, args, rng_key, X, Y, D_H)
 
-    # predict Y_test at inputs X_test
-    predictions = forward(X_test, samples, args.num_samples * args.num_chains)
+    if args.vmapped:
+        # predict Y_test at inputs X_test
+        vmap_args = (
+            samples,
+            random.split(rng_key_predict, args.num_samples * args.num_chains),
+        )
+        predictions = vmap(
+            lambda samples, rng_key: predict(model, rng_key, samples, X_test, D_H)
+        )(*vmap_args)
+        predictions = predictions[..., 0]
+    else:
+        # predict Y_test at inputs X_test
+        predictions = forward(X_test, samples, args.num_samples * args.num_chains)
     
     # compute mean prediction and confidence interval around median
     mean_prediction = jnp.mean(predictions, axis=0)
-    percentiles = np.percentile(predictions, [5.0, 95.0], axis=0)
+    percentiles = np.percentile(predictions, [2.5, 97.5], axis=0)
     cov_matrix = np.cov(predictions, rowvar=False)
 
     # make plots
     plt.figure(figsize=(8, 6)) #, constrained_layout=True)
-    for i in range(1000,1050):
+    for i in range(5000,5150):
         plt.plot(X_test[:, 1], predictions[i], color='gray', alpha=0.1)
         # plt.plot(X_test[:, 1], np.random.multivariate_normal(mean_prediction, cov_matrix), alpha=0.1, color='gray')  # Plot the posterior samples
     # plot 90% confidence level of predictions
@@ -176,23 +195,24 @@ def main(args):
     plt.plot(X_test[:, 1], mean_prediction, "blue", ls="solid", lw=2.0, label="Mean Prediction")
     plt.xlabel("X")
     plt.ylabel("Y")
-    plt.title("Mean predictions with 90% CI")
+    plt.title("Mean predictions with 95% CI")
     plt.plot(X[:, 1], Y[:, 0], "r.", alpha=0.5, label="Training Data")
     plt.legend()
     plt.grid()
-    plt.show()
-    # plt.savefig(f"bnn_plot_{N}.pdf")
+    # plt.show()
+    plt.savefig(f"bnn_smooth_plot_{N}_gap.pdf")
 
 
 if __name__ == "__main__":
     assert numpyro.__version__.startswith("0.16.1")
     parser = argparse.ArgumentParser(description="Bayesian neural network example")
-    parser.add_argument("-n", "--num-samples", nargs="?", default=2000, type=int)
-    parser.add_argument("--num-warmup", nargs="?", default=1000, type=int)
+    parser.add_argument("-n", "--num-samples", nargs="?", default=12000, type=int)
+    parser.add_argument("--num-warmup", nargs="?", default=2000, type=int)
     parser.add_argument("--num-chains", nargs="?", default=1, type=int)
-    parser.add_argument("--num-data", nargs="?", default=50, type=int)
+    parser.add_argument("--num-data", nargs="?", default=150, type=int)
     parser.add_argument("--num-hidden", nargs="?", default=10, type=int)
     parser.add_argument("--device", default="cpu", type=str, help='use "cpu" or "gpu".')
+    parser.add_argument("--vmapped", action="store_true", default=False)
     args = parser.parse_args()
 
     numpyro.set_platform(args.device)
