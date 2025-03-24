@@ -14,8 +14,12 @@ import numpyro
 from numpyro import handlers
 import numpyro.distributions as dist
 from numpyro.infer import MCMC, NUTS
+from numpyro import render_model
+
+from scipy.stats import ks_2samp
 
 # matplotlib.use("Agg")  # noqa: E402
+from scipy.stats import gamma
 
 
 # the non-linearity we use in our neural network
@@ -31,7 +35,7 @@ def model(X, Y, D_H, D_Y=1):
 
     # sample first layer (we put unit normal priors on all weights)
     # Normal
-    w1 = numpyro.sample("w1", dist.Normal(jnp.zeros((D_X, D_H)), jnp.ones((D_X, D_H))))
+    w1 = numpyro.sample("w1", dist.Normal(jnp.zeros((D_X, D_H)), np.ones((D_X, D_H))))
     w2 = numpyro.sample("w2", dist.Normal(jnp.zeros((D_H, D_H)), jnp.ones((D_H, D_H))))
     w3 = numpyro.sample("w3", dist.Normal(jnp.zeros((D_H, D_Y)), jnp.ones((D_H, D_Y))))
     
@@ -56,15 +60,17 @@ def model(X, Y, D_H, D_Y=1):
     if Y is not None:
         assert z3.shape == Y.shape
 
+
     # we put a prior on the observation noise
-    prec_obs = numpyro.sample("prec_obs", dist.Gamma(3.0, 1.0))
+    prec_obs = numpyro.sample("prec_obs", dist.Gamma(3, 1))
+    # prec_obs = numpyro.sample("prec_obs", dist .Gamma(1000, 0.1))
     sigma_obs = 1.0 / jnp.sqrt(prec_obs)
 
     # observe data
     with numpyro.plate("data", N):
         # note we use to_event(1) because each observation has shape (1,)
         numpyro.sample("Y", dist.Normal(z3, sigma_obs).to_event(1), obs=Y)
-
+            
 
 # helper function for HMC inference
 def run_inference(model, args, rng_key, X, Y, D_H):
@@ -79,11 +85,11 @@ def run_inference(model, args, rng_key, X, Y, D_H):
     )
     mcmc.run(rng_key, X, Y, D_H)
     # mcmc.print_summary()
-    print("\nMCMC elapsed time:", time.time() - start)
+    # print("\nMCMC elapsed time:", time.time() - start)
     return mcmc.get_samples()
 
 
-def get_data(N=50, D_X=3, sigma_obs=0.05, N_test=500, gap=True):
+def get_data(N=50, D_X=3, sigma_obs=0.05, N_test=500, gap=False):
     D_Y = 1  # Create 1D outputs
     np.random.seed(0)
     
@@ -132,6 +138,7 @@ def predict(model, rng_key, samples, X, D_H):
     model = handlers.substitute(handlers.seed(model, rng_key), samples)
     # note that Y will be sampled in the model because we pass Y=None here
     model_trace = handlers.trace(model).get_trace(X=X, Y=None, D_H=D_H)
+
     return model_trace["Y"]["value"]
 
 
@@ -143,7 +150,10 @@ def forward(X_test, samples, n):
         # Forward pass with activation functions
         z1 = nonlin(X_test @ sample["w1"])
         z2 = nonlin(z1 @ sample["w2"])
-        y_pred = z2 @ sample["w3"] 
+        z3 = z2 @ sample["w3"] 
+        sigma_obs = 1.0 / jnp.sqrt(sample["prec_obs"])
+        noise = dist.Normal(0, sigma_obs).sample(random.PRNGKey(i))
+        y_pred = z3 + noise
 
         predictions.append(y_pred)
 
@@ -156,12 +166,41 @@ def forward(X_test, samples, n):
 
 def main(args):
     N, D_X, D_H = args.num_data, 3, args.num_hidden
-    X, Y, X_test, Y_true = get_data(N=N, D_X=D_X, N_test=500, gap=True)
+    X, Y, X_test, Y_true = get_data(N=N, D_X=D_X, N_test=500, gap=False, sigma_obs=args.sigma_obs)
+
     # X_test = jnp.ones_like(X_test)
     # do inference
     rng_key, rng_key_predict = random.split(random.PRNGKey(0))
     samples = run_inference(model, args, rng_key, X, Y, D_H)
 
+    # Generate x values
+    x_new2 = np.linspace(0, 1, 10000)
+
+    # Compute PDF
+    pdf_new2 = gamma.pdf(x_new2, a=3, scale=1)
+
+    
+    predicted_noise = 1.0 / jnp.sqrt(samples["prec_obs"])
+
+    true_noise = (args.sigma_obs * np.random.randn(len(predicted_noise)))
+
+    plt.figure()
+    plt.hist(predicted_noise, bins=50, alpha=0.5, label='Predicted Noise')
+    plt.hist(true_noise, bins=50, alpha=0.5, label='True Noise')
+    # plt.plot(x_new2, pdf_new2, label='Gamma Distribution')
+    plt.legend()
+    plt.grid()
+    plt.savefig(f"KS_Test.pdf")
+    plt.show()
+
+
+
+    ks_stat, p_value = ks_2samp(predicted_noise, true_noise)
+    print(f"KS Statistic: {ks_stat}, p-value: {p_value}")
+
+
+    samples["prec_obs"] += 1e6
+    
     if args.vmapped:
         # predict Y_test at inputs X_test
         vmap_args = (
@@ -177,13 +216,14 @@ def main(args):
         predictions = forward(X_test, samples, args.num_samples * args.num_chains)
     
     # compute mean prediction and confidence interval around median
+
     mean_prediction = jnp.mean(predictions, axis=0)
     percentiles = np.percentile(predictions, [2.5, 97.5], axis=0)
     cov_matrix = np.cov(predictions, rowvar=False)
 
     # make plots
     plt.figure(figsize=(8, 6)) #, constrained_layout=True)
-    for i in range(5000,5150):
+    for i in range(6000,6150):
         plt.plot(X_test[:, 1], predictions[i], color='gray', alpha=0.1)
         # plt.plot(X_test[:, 1], np.random.multivariate_normal(mean_prediction, cov_matrix), alpha=0.1, color='gray')  # Plot the posterior samples
     # plot 90% confidence level of predictions
@@ -199,23 +239,23 @@ def main(args):
     plt.plot(X[:, 1], Y[:, 0], "r.", alpha=0.5, label="Training Data")
     plt.legend()
     plt.grid()
-    # plt.show()
-    plt.savefig(f"bnn_smooth_plot_{N}_gap.pdf")
+    plt.savefig(f"bnn_smooth_plot_{N}_notPredNoise.pdf")
+    plt.show()
 
 
 if __name__ == "__main__":
     assert numpyro.__version__.startswith("0.16.1")
     parser = argparse.ArgumentParser(description="Bayesian neural network example")
-    parser.add_argument("-n", "--num-samples", nargs="?", default=12000, type=int)
-    parser.add_argument("--num-warmup", nargs="?", default=2000, type=int)
+    parser.add_argument("-n", "--num-samples", nargs="?", default=15000, type=int)
+    parser.add_argument("--num-warmup", nargs="?", default=5000, type=int)
     parser.add_argument("--num-chains", nargs="?", default=1, type=int)
-    parser.add_argument("--num-data", nargs="?", default=150, type=int)
-    parser.add_argument("--num-hidden", nargs="?", default=10, type=int)
+    parser.add_argument("--num-data", nargs="?", default=15, type=int)
+    parser.add_argument("--num-hidden", nargs="?", default=20, type=int)
     parser.add_argument("--device", default="cpu", type=str, help='use "cpu" or "gpu".')
-    parser.add_argument("--vmapped", action="store_true", default=False)
+    parser.add_argument("--vmapped", action="store_true", default=True)
+    parser.add_argument("--sigma-obs", nargs="?", default=0.05, type=float)
     args = parser.parse_args()
 
     numpyro.set_platform(args.device)
     numpyro.set_host_device_count(args.num_chains)
-
     main(args)

@@ -1,0 +1,14 @@
+digraph {
+	graph [texmode=math]
+	X [label="$\mathbf{X}$" fillcolor="#D5F5E3" shape=box style=filled]
+	W1 [label="$\mathbf{W}_1 \sim \mathcal{N}(0, I)$" shape=ellipse]
+	W2 [label="$\mathbf{W}_2 \sim \mathcal{N}(0, I)$" shape=ellipse]
+	W3 [label="$\mathbf{W}_3 \sim \mathcal{N}(0, I)$" shape=ellipse]
+	"η" [label="$\eta \sim \mathcal{N}(0, \sigma^2)$" color=gray shape=ellipse]
+	Y [label="$\mathbf{Y} \sim \mathcal{N}(f(X), \eta)$" fillcolor="#FAD7A0" shape=box style=filled]
+	X -> W1 [label="$X @ W_1$"]
+	W1 -> W2 [label="hidden₁"]
+	W2 -> W3 [label="hidden₂"]
+	W3 -> Y [label=output]
+	"η" -> Y [label="observation noise"]
+}

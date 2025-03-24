@@ -19,7 +19,7 @@ from numpyro.infer import MCMC, NUTS
 import torch
 import torch.nn as nn
 import torch.optim as optim
-
+import seaborn as sns
 
 results = {
     "BNN": {
@@ -54,12 +54,29 @@ MSE = {
         15: None,
         50: None,
         1500: None
+    },
+}
+VCV  = {
+    "BNN": {
+        15: None,
+        50: None,
+        1500: None
+    },
+    "GP": {
+        15: None,
+        50: None,
+        1500: None
+    },
+    "MCDO": {
+        15: None,
+        50: None,
+        1500: None
     }
 }
 
 
 
-def get_data(N=50, D_X=3, sigma_obs=0.05, N_test=500, gap=True):
+def get_data(N=50, D_X=3, sigma_obs=0.05, N_test=500, N_val=20, gap=True, seed=0):
     D_Y = 1  # Create 1D outputs
     np.random.seed(0)
     
@@ -74,6 +91,7 @@ def get_data(N=50, D_X=3, sigma_obs=0.05, N_test=500, gap=True):
     Y_true -= jnp.mean(Y_true)
     Y_true /= jnp.std(Y_true)
     
+
     # Apply gap only if enabled
     if gap:
         mask = (X_test[:, 1] < -0.5) | (X_test[:, 1] > 0.5)
@@ -83,16 +101,33 @@ def get_data(N=50, D_X=3, sigma_obs=0.05, N_test=500, gap=True):
         X_available = X_test
         Y_available = Y_true
     
+    # Ensure X and Y are within the range [-1,1] **before selecting indices**
+    valid_mask = (X_available[:, 1] >= -1.0) & (X_available[:, 1] <= 1.0)
+    X_available = X_available[valid_mask]
+    Y_available = Y_available[valid_mask]
+
+    # Now we are guaranteed to sample only from valid points
+    if len(X_available) < N:
+        raise ValueError(f"Not enough valid samples ({len(X_available)}) to select N={N}.")
+
     indices = np.linspace(0, len(X_available) - 1, N, dtype=int)
     X = X_available[indices]
     Y = Y_available[indices] + sigma_obs * np.random.randn(N, D_Y)
-    
     assert X.shape == (N, D_X)
     assert Y.shape == (N, D_Y)
     assert X_test.shape == (N_test, D_X)
     assert Y_true.shape == (N_test, D_Y)
+
+    # random indices in X_available for validation
+    np.random.seed(seed)
+    indices_val = np.random.choice(len(X_available), N_val, replace=False)
+    X_val = X_available[indices_val]
+    Y_val = Y_available[indices_val]
+    Y_val = Y_val + sigma_obs * np.random.randn(N_val, D_Y)
+    assert X_val.shape == (N_val, D_X)
+    assert Y_val.shape == (N_val, D_Y)
     
-    return X, Y, X_test, Y_true
+    return X, Y, X_test, Y_true, X_val, Y_val
 
 
 ## GAUSSIAN PROCESS
@@ -100,7 +135,7 @@ def runGP(N):
     key = jr.PRNGKey(123)
     np.random.seed(8)
     D_X, D_H = 3, 5
-    X, Y, X_test, Y_true = get_data(N=N, D_X=D_X)
+    X, Y, X_test, Y_true, _, _ = get_data(N=N, D_X=D_X)
     # X_train = X[:,1].reshape(-1,1); y_train = Y[:,0].reshape(-1,1); X_test = X_test[:,1].reshape(-1,1)
 
     # dataset
@@ -115,7 +150,7 @@ def runGP(N):
     prior = gpx.gps.Prior(mean_function=meanf, kernel=kernel)
 
     # Define the likelihood 
-    likelihood = gpx.likelihoods.Gaussian(num_datapoints=15)
+    likelihood = gpx.likelihoods.Gaussian(num_datapoints=N)
 
     # Combine prior and likelihood to form posterior
     posterior = prior * likelihood
@@ -219,33 +254,18 @@ def predict(model, rng_key, samples, X, D_H):
     model_trace = handlers.trace(model).get_trace(X=X, Y=None, D_H=D_H)
     return model_trace["Y"]["value"]
 
-def runBNN(args):
-
-    N, D_X, D_H = args.num_data, 3, args.num_hidden
-    X, Y, X_test, Y_true = get_data(N=N, D_X=D_X)
-    
-    # do inference
-    rng_key, rng_key_predict = random.split(random.PRNGKey(0))
-    samples = run_inference(model, args, rng_key, X, Y, D_H)
-
-    # # predict Y_test at inputs X_test
-    # vmap_args = (
-    #     samples,
-    #     random.split(rng_key_predict, args.num_samples * args.num_chains),
-    # )
-    # predictions = vmap(
-    #     lambda samples, rng_key: predict(model, rng_key, samples, X_test, D_H)
-    # )(*vmap_args)
-    # predictions = predictions[..., 0]
-
+def forward(X_test, samples, n):
     predictions = []
-    for i in range(args.num_samples * args.num_chains):
+    for i in range(n):
         sample = {k: v[i] for k, v in samples.items()} 
 
         # Forward pass with activation functions
         z1 = jnp.tanh(X_test @ sample["w1"])
         z2 = jnp.tanh(z1 @ sample["w2"])
-        y_pred = z2 @ sample["w3"]  # No activation here for regression
+        z3 = z2 @ sample["w3"] 
+        sigma_obs = 1.0 / jnp.sqrt(sample["prec_obs"])
+        noise = dist.Normal(0, sigma_obs).sample(random.PRNGKey(i))
+        y_pred = z3 + noise
 
         predictions.append(y_pred)
 
@@ -254,7 +274,31 @@ def runBNN(args):
 
     # Ensure correct shape (num_samples, num_test_points)
     predictions = predictions[..., 0]  # Assuming output shape is (N, 1)
+    return predictions
 
+def runBNN(args):
+
+    N, D_X, D_H = args.num_data, 3, args.num_hidden
+    X, Y, X_test, Y_true, _, _ = get_data(N=N, D_X=D_X)
+    
+    # do inference
+    rng_key, rng_key_predict = random.split(random.PRNGKey(0))
+    samples = run_inference(model, args, rng_key, X, Y, D_H)
+    samples["prec_obs"] += 1e6
+    
+    if args.vmapped:
+        # predict Y_test at inputs X_test
+        vmap_args = (
+            samples,
+            random.split(rng_key_predict, args.num_samples * args.num_chains),
+        )
+        predictions = vmap(
+            lambda samples, rng_key: predict(model, rng_key, samples, X_test, D_H)
+        )(*vmap_args)
+        predictions = predictions[..., 0]
+    else:
+        # predict Y_test at inputs X_test
+        predictions = forward(X_test, samples, args.num_samples * args.num_chains)
 
     mse = []
     # mse for 1000 predictions
@@ -265,7 +309,6 @@ def runBNN(args):
     mean_prediction = jnp.mean(predictions, axis=0)
     #percentiles = np.percentile(predictions, [5.0, 95.0], axis=0)
     std_prediction = jnp.std(predictions, axis=0)
-    cov_matrix = np.cov(predictions, rowvar=False)
     return mean_prediction, std_prediction, predictions, X, Y, X_test, Y_true, mse
 
 
@@ -273,35 +316,36 @@ def runBNN(args):
 ## MONTE CARLO DROPOUT
 # MC Variational Dense Layer
 class MCVariationalDense(nn.Module):
-    def __init__(self, n_in, n_out, model_prob, model_lam):
+    def __init__(self, n_in, n_out, model_prob, model_lam, layer, dropout_layers=[1,2,3,4]):
         super(MCVariationalDense, self).__init__()
         self.model_prob = model_prob
         self.model_lam = model_lam
         self.dropout = nn.Dropout(p=self.model_prob)
         self.model_M = nn.Parameter(torch.randn(n_in, n_out) * 0.1)
         self.model_m = nn.Parameter(torch.zeros(n_out))
+        self.layer = layer
+        self.dropout_layers = dropout_layers
 
     def forward(self, X):
-        if not self.training:
-            model_W = self.model_M
+        if not self.training and self.layer in self.dropout_layers:
+            model_W = self.model_M * torch.bernoulli(torch.full_like(self.model_M, 1 - self.model_prob)) / (1 - self.model_prob)      
         else:
-            model_W = self.dropout(self.model_M)
+            model_W = self.model_M
         output = torch.mm(X, model_W) + self.model_m
         return output
 
     def regularization(self):
-        return self.model_lam * (
-            self.model_prob * torch.sum(self.model_M ** 2) + torch.sum(self.model_m ** 2)
-        )
+        return self.model_lam * (torch.sum(self.model_M ** 2) + torch.sum(self.model_m ** 2))
 
 # MC Variational Neural Network
 class MCVariationalNN(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size, model_prob, model_lam):
+    def __init__(self, input_size, hidden_size, output_size, model_prob, model_lam, dropout_layers=[1,2,3,4]):
         super(MCVariationalNN, self).__init__()
-        self.layer1 = MCVariationalDense(input_size, hidden_size, model_prob, model_lam)
-        self.layer2 = MCVariationalDense(hidden_size, hidden_size, model_prob, model_lam)
-        self.layer3 = MCVariationalDense(hidden_size, hidden_size, model_prob, model_lam)
-        self.layer4 = MCVariationalDense(hidden_size, output_size, model_prob, model_lam)
+        self.dropout_layers = dropout_layers
+        self.layer1 = MCVariationalDense(input_size, hidden_size, model_prob, model_lam, layer=1, dropout_layers=dropout_layers)
+        self.layer2 = MCVariationalDense(hidden_size, hidden_size, model_prob, model_lam, layer=2, dropout_layers=dropout_layers)
+        self.layer3 = MCVariationalDense(hidden_size, hidden_size, model_prob, model_lam, layer=3, dropout_layers=dropout_layers)
+        self.layer4 = MCVariationalDense(hidden_size, output_size, model_prob, model_lam, layer=4, dropout_layers=dropout_layers)
 
     def forward(self, X):
         X = torch.relu(self.layer1(X))
@@ -331,7 +375,7 @@ def runMCDO(N, hidden_size=32, model_prob=0.1, model_lam=1e-2, lr=1e-2, num_epoc
     np.random.seed(0)
     torch.manual_seed(0)
     # Convert to PyTorch tensors
-    X, Y, X_test, Y_true = get_data(N=N, D_X=3)
+    X, Y, X_test, Y_true, _, _ = get_data(N=N, D_X=3)
     # X_train = X[:,1].reshape(-1,1); y_train = Y[:,0].reshape(-1,1); X_test = X_test[:,1].reshape(-1,1)
     X_train_torch = torch.tensor(X.tolist(), dtype=torch.float32)
     Y_train_torch = torch.tensor(Y.tolist(), dtype=torch.float32)
@@ -342,9 +386,14 @@ def runMCDO(N, hidden_size=32, model_prob=0.1, model_lam=1e-2, lr=1e-2, num_epoc
     output_size = 1
 
     # Initialize model, loss function, and optimizer
-    model = MCVariationalNN(input_size, hidden_size, output_size, model_prob, model_lam)
+    model = MCVariationalNN(input_size, hidden_size, output_size, model_prob, model_lam, dropout_layers=[2,3])
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
+    validation_error = []
+    patience = 7
+    min_delta = 1e-6  # Minimum change in loss to qualify as improvement
+    best_val_loss = float('inf')
+    epochs_no_improve = 0
 
     # Training
     for epoch in range(num_epochs):
@@ -356,7 +405,25 @@ def runMCDO(N, hidden_size=32, model_prob=0.1, model_lam=1e-2, lr=1e-2, num_epoc
         optimizer.step()
         
         if epoch % 100 == 0:
-            print(f"Epoch {epoch}, Loss: {loss.item():.4f}")
+            model.eval()  # Set model to evaluation mode
+            with torch.no_grad():  # Disable gradient computation
+                _, _, _, _, X_val, Y_val = get_data(N=150, D_X=3, N_test=500, gap=True, seed=epoch)
+                val_outputs = model(torch.tensor(np.array(X_val), dtype=torch.float32))
+                val_loss = criterion(val_outputs, torch.tensor(np.array(Y_val), dtype=torch.float32))
+                validation_error.append(val_loss.item())
+
+            print(f"Epoch {epoch}, Loss: {loss.item():.4f}, Val Loss: {val_loss.item():.4f}")
+
+            # Check early stopping condition
+            if val_loss < best_val_loss - min_delta:
+                best_val_loss = val_loss
+                epochs_no_improve = 0  # Reset counter
+            else:
+                epochs_no_improve += 1  # Increment counter
+
+            if epochs_no_improve >= patience and epoch > 2*patience:
+                print(f"Early stopping at epoch {epoch}, best validation loss: {best_val_loss:.4f}")
+                break  # Stop training
 
     # MC Dropout Inference
     model.eval()
@@ -369,12 +436,13 @@ def runMCDO(N, hidden_size=32, model_prob=0.1, model_lam=1e-2, lr=1e-2, num_epoc
     # Convert to numpy
     mean_pred = mean_pred.numpy()
     std_pred = std_pred.numpy()
+
     return mean_pred, std_pred, predictions, X, Y, X_test, Y_true, mse
 
 
 
-samples = 12000
-warmup = 2000
+samples = 2000
+warmup = 200
 chains = 1
 num_hidden = 4
 
@@ -387,7 +455,8 @@ for num_data in num_data_values:
         num_warmup=warmup,
         num_chains=chains,
         num_hidden=num_hidden,
-        num_data=num_data
+        num_data=num_data,
+        vmapped=True
     )
     
 
@@ -397,7 +466,7 @@ for num_data in num_data_values:
     mean_prediction, std_prediction, preds, X, Y, X_test, Y_true, mse = runBNN(args)
     results["BNN"][num_data] = (mean_prediction, std_prediction, preds, X, Y, X_test, Y_true, mse)
 
-    mean_pred, std_pred, preds, X, Y, X_test, Y_true, mse = runMCDO(num_data, hidden_size=64, model_prob=0.2, model_lam=0.01, lr=0.001, num_epochs=10000)
+    mean_pred, std_pred, preds, X, Y, X_test, Y_true, mse = runMCDO(num_data, hidden_size=64, model_prob=0.2, model_lam=1e-5, lr=0.001, num_epochs=1000)
     results["MCDO"][num_data] = (mean_pred, std_pred, preds, X, Y, X_test, Y_true, mse)
 
 
@@ -452,30 +521,83 @@ for row, model in enumerate(models):
 
 plt.tight_layout()
 plt.savefig("plots/AllModelsComparison_uniformDO_smoothbnn.pdf")
-plt.show()
+# plt.show()
 
-# plot MSE
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 fig, axes = plt.subplots(3, 3, figsize=(15, 15))
-
 for row, model in enumerate(models):
     for col, num_data in enumerate(num_data_values):
         ax = axes[row, col]
         
         # Extract stored results
         if model == "GP":
-            _, _, _, _, _, _, _, _, mse = results[model][num_data]
+            mean_prediction, _, _, _, _, _, _, _, _ = results[model][num_data]
         else:
-            _, _, _, _, _, _, _, mse = results[model][num_data]
+            mean_prediction, _, _, _, _, _, _, _ = results[model][num_data]
 
-        ax.hist(mse, bins=50, color="skyblue", edgecolor="black")
+        plot_acf(mean_prediction, ax=ax, lags=20)
         ax.set_title(f"{model} MSE (n={num_data})")
-        ax.set_xlabel("Mean Squared Error")
-        ax.set_ylabel("Frequency")
+        ax.set_xlabel("Lag")
+        ax.set_ylabel("Correlation")
         ax.grid()
         # Title
-        ax.set_title(f"{model} MSE (n={num_data})\nMean: {np.mean(mse):.2f}, Std: {np.std(mse):.2f}")
+        ax.set_title(f"{model} ACF (n={num_data})")
 
 
 plt.tight_layout()
 plt.savefig("plots/MSE_ALL_DO_smoothbnn.pdf")
+# plt.show()
+
+
+fig, axes = plt.subplots(3, 3, figsize=(15, 15))
+for row, model in enumerate(models):
+    for col, num_data in enumerate(num_data_values):
+        ax = axes[row, col]
+        
+        # Extract stored results
+        if model == "GP":
+            _, _, cov_matrix, _, _, _, _, _, _ = results[model][num_data]
+        else:
+            _, _, preds, _, _, _, _, _ = results[model][num_data]
+            if model == "MCDO":
+                cov_matrix = np.cov(preds[:,:,0], rowvar=False)
+            else:
+                cov_matrix = np.cov(preds, rowvar=False)
+            
+        sns.heatmap(cov_matrix, annot=True, cmap="coolwarm", fmt=".2f", ax=ax)
+        ax.set_title(f"{model} VCV (n={num_data})")
+        ax.set_xlabel("x_i")
+        ax.set_ylabel("x_j")
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
+        ax.grid()
+    
+
+plt.tight_layout()
+plt.savefig("plots/vcv.pdf")
 plt.show()
+
+
+fig, axes = plt.subplots(3, 3, figsize=(15, 15))
+for row, model in enumerate(models):
+    for col, num_data in enumerate(num_data_values):
+        ax = axes[row, col]
+        
+        # Extract stored results
+        if model == "GP":
+            _, _, cov_matrix, _, _, _, _, _, _ = results[model][num_data]
+        else:
+            _, _, preds, _, _, _, _, _ = results[model][num_data]
+            if model == "MCDO":
+                cov_matrix = np.cov(preds[:,:,0], rowvar=False)
+            else:
+                cov_matrix = np.cov(preds, rowvar=False)
+            
+        sns.heatmap(cov_matrix, annot=True, cmap="coolwarm", fmt=".2f", ax=ax)
+        ax.set_title(f"{model} VCV (n={num_data})")
+        ax.set_xlabel("x_i")
+        ax.set_ylabel("x_j")
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
+        ax.grid()
+    

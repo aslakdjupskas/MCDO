@@ -1,0 +1,8 @@
+*.png
+*.pdf
+*.mp4
+*.csv
+
+**/MNIST/raw/
+*.DS_Store
+*.pyc
