@@ -371,7 +371,7 @@ def mc_inference(model, X, n_samples=100):
             preds[i] = model(X)
     return preds.mean(dim=0), preds.std(dim=0), preds
 
-def runMCDO(N, hidden_size=32, model_prob=0.1, model_lam=1e-2, lr=1e-2, num_epochs=1000):
+def runMCDO(N, hidden_size=32, model_prob=0.1, model_lam=1e-2, lr=1e-2, num_epochs=1000, n_inference_samples=1000):
     np.random.seed(0)
     torch.manual_seed(0)
     # Convert to PyTorch tensors
@@ -427,7 +427,7 @@ def runMCDO(N, hidden_size=32, model_prob=0.1, model_lam=1e-2, lr=1e-2, num_epoc
 
     # MC Dropout Inference
     model.eval()
-    mean_pred, std_pred, predictions = mc_inference(model, X_test_torch, n_samples=10000)
+    mean_pred, std_pred, predictions = mc_inference(model, X_test_torch, n_samples=n_inference_samples)
     mse = []
     # MSE for 1000 predictions
     for pred in predictions[-1000:]: 
@@ -441,8 +441,8 @@ def runMCDO(N, hidden_size=32, model_prob=0.1, model_lam=1e-2, lr=1e-2, num_epoc
 
 
 
-samples = 2000
-warmup = 200
+samples = 12000
+warmup = 2000
 chains = 1
 num_hidden = 4
 
@@ -466,7 +466,7 @@ for num_data in num_data_values:
     mean_prediction, std_prediction, preds, X, Y, X_test, Y_true, mse = runBNN(args)
     results["BNN"][num_data] = (mean_prediction, std_prediction, preds, X, Y, X_test, Y_true, mse)
 
-    mean_pred, std_pred, preds, X, Y, X_test, Y_true, mse = runMCDO(num_data, hidden_size=64, model_prob=0.2, model_lam=1e-5, lr=0.001, num_epochs=1000)
+    mean_pred, std_pred, preds, X, Y, X_test, Y_true, mse = runMCDO(num_data, hidden_size=64, model_prob=0.2, model_lam=1e-5, lr=0.001, num_epochs=1000, n_inference_samples=samples)
     results["MCDO"][num_data] = (mean_pred, std_pred, preds, X, Y, X_test, Y_true, mse)
 
 
@@ -600,4 +600,7 @@ for row, model in enumerate(models):
         ax.set_xticklabels([])
         ax.set_yticklabels([])
         ax.grid()
+plt.tight_layout()
+plt.savefig("plots/ACF_allModels.pdf")
+# plt.show()
     
