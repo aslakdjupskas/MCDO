@@ -348,9 +348,9 @@ class MCVariationalNN(nn.Module):
         self.layer4 = MCVariationalDense(hidden_size, output_size, model_prob, model_lam, layer=4, dropout_layers=dropout_layers)
 
     def forward(self, X):
-        X = torch.relu(self.layer1(X))
-        X = torch.relu(self.layer2(X))
-        X = torch.relu(self.layer3(X))
+        X = torch.tanh(self.layer1(X))
+        X = torch.tanh(self.layer2(X))
+        X = torch.tanh(self.layer3(X))
         X = self.layer4(X)
         return X
 
@@ -364,16 +364,19 @@ class MCVariationalNN(nn.Module):
 
 # MC Dropout inference
 def mc_inference(model, X, n_samples=100):
-    model.train()  # Keep dropout active
+    model.eval()
     preds = torch.zeros((n_samples, X.size(0), 1))
     with torch.no_grad():
         for i in range(n_samples):
+            # seed
+            np.random.seed(i)
+            torch.manual_seed(i)
             preds[i] = model(X)
     return preds.mean(dim=0), preds.std(dim=0), preds
 
-def runMCDO(N, hidden_size=32, model_prob=0.1, model_lam=1e-2, lr=1e-2, num_epochs=1000, n_inference_samples=1000):
-    np.random.seed(0)
-    torch.manual_seed(0)
+def runMCDO(N, hidden_size=32, model_prob=0.1, model_lam=1e-3, lr=1e-3, num_epochs=1000, n_inference_samples=1000):
+    # np.random.seed(0)
+    # torch.manual_seed(0)
     # Convert to PyTorch tensors
     X, Y, X_test, Y_true, _, _ = get_data(N=N, D_X=3)
     # X_train = X[:,1].reshape(-1,1); y_train = Y[:,0].reshape(-1,1); X_test = X_test[:,1].reshape(-1,1)
@@ -408,7 +411,10 @@ def runMCDO(N, hidden_size=32, model_prob=0.1, model_lam=1e-2, lr=1e-2, num_epoc
             model.eval()  # Set model to evaluation mode
             with torch.no_grad():  # Disable gradient computation
                 _, _, _, _, X_val, Y_val = get_data(N=150, D_X=3, N_test=500, gap=True, seed=epoch)
-                val_outputs = model(torch.tensor(np.array(X_val), dtype=torch.float32))
+                val_inference = []
+                for i in range(20):
+                    val_inference.append(model(torch.tensor(np.array(X_val), dtype=torch.float32)))
+                val_outputs = torch.stack(val_inference).mean(dim=0)
                 val_loss = criterion(val_outputs, torch.tensor(np.array(Y_val), dtype=torch.float32))
                 validation_error.append(val_loss.item())
 
@@ -466,9 +472,8 @@ for num_data in num_data_values:
     mean_prediction, std_prediction, preds, X, Y, X_test, Y_true, mse = runBNN(args)
     results["BNN"][num_data] = (mean_prediction, std_prediction, preds, X, Y, X_test, Y_true, mse)
 
-    mean_pred, std_pred, preds, X, Y, X_test, Y_true, mse = runMCDO(num_data, hidden_size=64, model_prob=0.2, model_lam=1e-5, lr=0.001, num_epochs=1000, n_inference_samples=samples)
+    mean_pred, std_pred, preds, X, Y, X_test, Y_true, mse = runMCDO(num_data, hidden_size=32, model_prob=0.2, model_lam=1e-3, lr=0.001, num_epochs=10000, n_inference_samples=samples)
     results["MCDO"][num_data] = (mean_pred, std_pred, preds, X, Y, X_test, Y_true, mse)
-
 
 # Sample data (Replace these with actual data from your results dictionary)
 models = ["GP", "BNN", "MCDO"]
@@ -476,7 +481,7 @@ models = ["GP", "BNN", "MCDO"]
 fig, axes = plt.subplots(3, 3, figsize=(15, 15))
 
 for row, model in enumerate(models):
-    for col, num_data in enumerate(num_data_values):
+    for col, num_data in enumerate(num_data_values): 
         ax = axes[row, col]
         
         # Extract stored results
@@ -487,19 +492,19 @@ for row, model in enumerate(models):
 
         # Plot individual predictions for BNN and MCDO
         if model in ["BNN", "MCDO"]:
-            for pred in preds[-100:]:  # Plot fewer samples for clarity
+            for pred in preds[-200:]:  # Plot fewer samples for clarity
                 ax.plot(X_test[:, 1], pred, color='gray', alpha=0.1)
             # if model == "BNN":
             #     ax.plot(X_test[:, 1], preds[-51], color='black', alpha=0.5)
 
         else:
-            for _ in range(100):
+            for _ in range(200):
                 ax.plot(X_test[:, 1], np.random.multivariate_normal(mean_prediction.flatten(), cov_matrix), alpha=0.1, color='gray')
         
-        # Compute 90% confidence intervals        
-        lower_bound = np.squeeze(mean_prediction - 1.645 * std_prediction)
-        upper_bound = np.squeeze(mean_prediction + 1.645 * std_prediction)
-        ax.fill_between(X_test[:, 1], lower_bound, upper_bound, color="lightblue", label="90% CI")
+        # Compute 95% confidence intervals        
+        lower_bound = np.squeeze(mean_prediction - 1.96 * std_prediction)
+        upper_bound = np.squeeze(mean_prediction + 1.96 * std_prediction)
+        ax.fill_between(X_test[:, 1], lower_bound, upper_bound, color="lightblue", label="95% CI")
         
         # Plot mean prediction
         ax.plot(X_test[:, 1], mean_prediction, "blue", ls="solid", lw=2.0, label="Mean Prediction")
@@ -522,6 +527,7 @@ for row, model in enumerate(models):
 plt.tight_layout()
 plt.savefig("plots/AllModelsComparison_uniformDO_smoothbnn.pdf")
 # plt.show()
+plt.close()
 
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 fig, axes = plt.subplots(3, 3, figsize=(15, 15))
@@ -535,7 +541,7 @@ for row, model in enumerate(models):
         else:
             mean_prediction, _, _, _, _, _, _, _ = results[model][num_data]
 
-        plot_acf(mean_prediction, ax=ax, lags=20)
+        plot_acf(mean_prediction, ax=ax, lags=499)
         ax.set_title(f"{model} MSE (n={num_data})")
         ax.set_xlabel("Lag")
         ax.set_ylabel("Correlation")
@@ -545,7 +551,8 @@ for row, model in enumerate(models):
 
 
 plt.tight_layout()
-plt.savefig("plots/MSE_ALL_DO_smoothbnn.pdf")
+plt.savefig("plots/AFC_smoothbnn.pdf")
+plt.close()
 # plt.show()
 
 
@@ -574,8 +581,8 @@ for row, model in enumerate(models):
     
 
 plt.tight_layout()
-plt.savefig("plots/vcv.pdf")
-plt.show()
+plt.savefig("plots/vcv_all.pdf")
+# plt.show()
 
 
 fig, axes = plt.subplots(3, 3, figsize=(15, 15))
@@ -601,6 +608,6 @@ for row, model in enumerate(models):
         ax.set_yticklabels([])
         ax.grid()
 plt.tight_layout()
-plt.savefig("plots/ACF_allModels.pdf")
+plt.savefig("plots/MSE_allModels.pdf")
 # plt.show()
     

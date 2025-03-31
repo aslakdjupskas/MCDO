@@ -20,22 +20,24 @@ class MCVariationalDense(nn.Module):
 
     def forward(self, X):
         "Dropout only on the selected layers and during training"
-        if self.training or self.layer in self.dropout_layers:
-            if self.training: new_model_prob = self.model_prob* 0.25
-            else: new_model_prob = self.model_prob
-            model_W = self.model_M * torch.bernoulli(torch.full_like(self.model_M, 1 - self.model_prob)) / (1 - self.model_prob)      
+        if not self.training and self.layer in self.dropout_layers:
+            if self.layer in self.dropout_layers:
+                model_W = self.model_M * torch.bernoulli(torch.full_like(self.model_M, 1 - self.model_prob)) / (1 - self.model_prob)      
+            elif self.training: # Only scale in layers with dropout
+                model_W = self.model_M * torch.bernoulli(torch.full_like(self.model_M, 1 - self.model_prob))
+
         else:
             model_W = self.model_M
         output = torch.mm(X, model_W) + self.model_m
         return output
 
     def regularization(self):
-        return self.model_lam * (
-            torch.sum(self.model_M ** 2) + torch.sum(self.model_m ** 2)
-        )
         # return self.model_lam * (
-        #     torch.sum(np.abs(self.model_M)) + torch.sum(np.abs(self.model_m))
+        #     torch.sum(self.model_M ** 2) + torch.sum(self.model_m ** 2)
         # )
+        return self.model_lam * (
+            torch.sum(torch.abs(self.model_M)) + torch.sum(torch.abs(self.model_m))
+        )
 
 class MCVariationalNN(nn.Module):
     def __init__(self, input_size, hidden_size, output_size, model_prob, model_lam, dropout_layers):
@@ -73,10 +75,6 @@ def mc_inference(model, X, n_samples=100):
             preds[i] = model(X)
     return preds.mean(dim=0), preds.std(dim=0), preds
 
-
-
-np.random.seed(0)
-torch.manual_seed(0)
 
 import numpy as np
 import jax.numpy as jnp
@@ -116,6 +114,9 @@ def get_data(N=50, D_X=3, sigma_obs=0.05, N_test=500, N_val=20, gap=True, seed=0
         raise ValueError(f"Not enough valid samples ({len(X_available)}) to select N={N}.")
 
     indices = np.linspace(0, len(X_available) - 1, N, dtype=int)
+
+    # np.random.seed(seed)
+    # indices = np.random.choice(len(X_available), N, replace=False)
     X = X_available[indices]
     Y = Y_available[indices] + sigma_obs * np.random.randn(N, D_Y)
     assert X.shape == (N, D_X)
@@ -135,27 +136,26 @@ def get_data(N=50, D_X=3, sigma_obs=0.05, N_test=500, N_val=20, gap=True, seed=0
     return X, Y, X_test, Y_true, X_val, Y_val
 
 
-
-X, Y, X_test, Y_true, _, _ = get_data(N=150, D_X=3, N_test=500, gap=True)
+sigma = 0.05
+X, Y, X_test, Y_true, _, _ = get_data(N=150, D_X=3, N_test=500, sigma_obs=sigma, gap=True)
 
 # plot data
 # plt.figure()
-# plt.plot(X[:, 1], Y, "r.", label="Train Data", alpha=0.5)
+# plt.plot(X[:, 1], Y, "r.", label="Train Data", alpha=0.5
 # plt.plot(X_val[:,1], Y_val, "bo", lw=2.0, label="True mean")
 # plt.plot(X_test[:,1], Y_true, "k--", lw=2.0, label="True mean")
 # plt.grid()
 # plt.show()
 
 
-
+## PARAMETERS
 input_size = 3
 output_size = 1
 hidden_size = 32
-model_prob  = 0.3   # Dropout probability
-model_lam   = 0  # Regularization coefficient
-lr          = 0.001 # Learning rate
-seed        = 10
-np.random.seed(seed)
+model_prob  = 0.2    # Dropout probability
+model_lam   = 1e-3   # Regularization coefficient
+lr          = 0.001  # Learning rate
+seed        = 169      # Random seed
 
 
 # Convert to PyTorch tensors
@@ -163,25 +163,14 @@ X_train_torch = torch.tensor(np.array(X), dtype=torch.float32)
 Y_train_torch = torch.tensor(np.array(Y), dtype=torch.float32)
 X_test_torch = torch.tensor(np.array(X_test), dtype=torch.float32)
 
-# Subplot 3x3
+# Subplot 4x4
 plt.figure(figsize=(15, 15))
-plt.title(f"MC Dropout on different layers\nDropout probability: {model_prob}\n\n")
+plt.title(f"Weights Distribution for Different L1 Regularization Coefficients\n\n")
 plt.xticks([])
 plt.yticks([])
 plt.box(False)
 
-dropout_layers = {
-    'Middle layers':[2, 3],
-    'All layers':[1, 2, 3, 4],
-    'First layer':[1],
-    'Second layer':[2],
-    'Third layer':[3],
-    'Last layer':[4],
-    # 'Middle layers':[2, 3],
-    'First two layers':[1, 2],
-    'Last two layers':[3, 4],
-    'First and last layer':[1, 4]
-}
+
 mean_fcn = {
     # 'Middle layers':[2, 3],
     'All layers':None,
@@ -195,21 +184,28 @@ mean_fcn = {
     'First and last layer':None,
 }
 
-for idx, (name, layers) in enumerate(dropout_layers.items()):
+# 16, seeds 
+lambdas = [1e-3, 1e-4, 1e-5, 1e-8, 1e-10, 0]
+
+
+for idx, model_lam in enumerate(lambdas):
+    # random seed
+    np.random.seed(seed)
+    torch.manual_seed(seed)
 
     # Initialize model, loss function, and optimizer
-    model = MCVariationalNN(input_size, hidden_size, output_size, model_prob, model_lam, layers)
+    model = MCVariationalNN(input_size, hidden_size, output_size, model_prob, model_lam, [2,3])
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
     validation_error = []
     loss_history = []  
-    patience = np.inf
+    patience = 12
     min_delta = 1e-10  # Minimum change in loss to qualify as improvement
     best_val_loss = float('inf')
     epochs_no_improve = 0
 
     # Training
-    epochs = 2750
+    epochs = 12750
     for epoch in range(epochs):
         model.train()
         optimizer.zero_grad()
@@ -218,7 +214,7 @@ for idx, (name, layers) in enumerate(dropout_layers.items()):
         loss.backward()
         optimizer.step()
         
-        if epoch % 1 == 0:
+        if epoch % 1000 == 0:
             model.eval()  # Set model to evaluation mode
             with torch.no_grad():  # Disable gradient computation
                 _, _, _, _, X_val, Y_val = get_data(N=150, D_X=3, N_test=500, gap=True, seed=epoch)
@@ -243,19 +239,22 @@ for idx, (name, layers) in enumerate(dropout_layers.items()):
             
             # validation_error.append()
     # MC Dropout Inference
-    torch.save(model.state_dict(), f"MCDO/Code/DOMC/models/model_lr{model_lam}_doRate{model_prob}_seed{seed}.pth")
+    # torch.save(model.state_dict(), f"MCDO/Code/DOMC/models/model_lambda{model_lam}_doRate{model_prob}_seed{seed}_noise{sigma}.pth")
     model.eval()
+    # List of weight arrays
+    weights = [
+        model.layer1.model_M.detach().numpy().flatten(),
+        model.layer1.model_m.detach().numpy(),
+        model.layer2.model_M.detach().numpy().flatten(),
+        model.layer2.model_m.detach().numpy(),
+        model.layer3.model_M.detach().numpy().flatten(),
+        model.layer3.model_m.detach().numpy(),
+        model.layer4.model_M.detach().numpy().flatten(),
+        model.layer4.model_m.detach().numpy()
+    ]
 
-    # plt.figure()
-    # plt.plot(validation_error, label="Validation Loss")
-    # plt.plot(loss_history, label="Training loss")
-    # plt.title(f"Training error for {name}")
-    # plt.xlabel("Epoch")
-    # plt.ylabel("Loss")
-    # plt.yscale("log")
-    # plt.legend()
-    # plt.grid()
-    # plt.show()
+    # Choose an axis for concatenation (axis=0 stacks vertically, axis=1 stacks horizontally)
+    weights_array = np.concatenate(weights, axis=0)  # Adjust axis as needed
 
     mean_pred, std_pred, predictions = mc_inference(model, X_test_torch, n_samples=20000)
 
@@ -263,45 +262,23 @@ for idx, (name, layers) in enumerate(dropout_layers.items()):
     mean_pred = mean_pred.numpy()
     std_pred = std_pred.numpy()
 
-    mean_fcn[name] = mean_pred
+    # plot in subplot  
+    plt.subplot(2, 3, idx+1)
+    # Plot histogram
+    plt.hist(weights_array, bins=30, alpha=0.75, color='b', edgecolor='black')
+    plt.xlabel("Weight Value")
+    plt.ylabel("Frequency")
+    plt.title(f'\nRegularization: {model_lam}')
+    plt.grid(True)
 
-    # plot in subplot   
-    plt.subplot(3, 3, idx+1)
-    plt.plot(X[:, 1], Y, "r.", label="Train Data", alpha=0.5)
-    plt.plot(X_test[:,1], mean_pred, label="MC Mean Prediction", color="blue")
-    for i in range(250):
-        plt.plot(X_test[:,1], predictions[5000+i], color="gray", alpha=0.05)
-    plt.fill_between(
-        X_test[:,1],
-        (mean_pred - 2 * std_pred).flatten(),
-        (mean_pred + 2 * std_pred).flatten(),
-        color="lightblue",
-        label="95% CI",
-    )
-    plt.plot(X_test[:,1], Y_true, "k--", lw=2.0, label="True mean")
-    plt.grid()
-    plt.legend()
-    plt.xlabel("X")
-    plt.ylabel("Y")
-    plt.ylim(-4, 4)
-    plt.title(f"\nDropout on: {name}")
-plt.tight_layout()
-# plt.savefig(f"MCDO/Code/DOMC/plots/MCDO_pytorch_layersdifferDO{model_prob}_Reg{model_lam}.pdf")
-plt.show()
+    
 
-from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
-# Loop through the mean functions and plot the ACF and PACF in a 3x3 subplot
-plt.figure(figsize=(15, 15))
-plt.title("ACF and PACF of the mean functions")
-plt.xticks([])
-plt.yticks([])
-plt.box(False)
-for idx, (name, mean_pred) in enumerate(mean_fcn.items()):
-    plt.subplot(3, 3, idx+1)
-    if mean_pred is not None:
-        plot_acf(mean_pred.flatten(), ax=plt.gca(), lags=50, title=f"{name} ACF")
 plt.tight_layout()
-plt.show()
+# plt.savefig(f"MCDO/Code/DOMC/plots/MCDO_pytorch_SEEDSdifferDO{model_prob}_Reg{model_lam}_NoDoTraining.pdf")
+plt.savefig(f"MCDO/Code/DOMC/plots/weight_distributionL1.pdf")
+# plt.show()
+
+
 
 
 print("Done")
