@@ -5,6 +5,25 @@ import matplotlib.pyplot as plt
 import torch.optim as optim
 import jax.numpy as jnp
 import numpy as np
+import optuna
+import pandas as pd
+
+
+import matplotlib as mpl
+
+# Use LaTeX-like font (Computer Modern)
+mpl.rcParams['text.usetex'] = False  # Don't use full LaTeX
+mpl.rcParams['mathtext.fontset'] = 'cm'  # Use Computer Modern for math
+mpl.rcParams['font.family'] = 'STIXGeneral'  # Close match to LaTeX text
+mpl.rcParams['font.size'] = 20
+mpl.rcParams['axes.titlesize'] = 20
+mpl.rcParams['axes.labelsize'] = 16
+mpl.rcParams['xtick.labelsize'] = 16
+mpl.rcParams['ytick.labelsize'] = 16
+mpl.rcParams['legend.fontsize'] = 14
+mpl.rcParams['figure.titlesize'] = 16
+mpl.rcParams['axes.labelweight'] = 'bold'
+mpl.rcParams['axes.titleweight'] = 'bold'
 
 # MC Variational Dense Layer
 class MCVariationalDense(nn.Module):
@@ -47,16 +66,16 @@ class MCVariationalNN(nn.Module):
         self.layer1 = MCVariationalDense(input_size, hidden_size, model_prob, model_lam, layer=1, dropout_layers=dropout_layers)
         self.layer2 = MCVariationalDense(hidden_size, hidden_size, model_prob, model_lam, layer=2, dropout_layers=dropout_layers)
         self.layer3 = MCVariationalDense(hidden_size, hidden_size, model_prob, model_lam, layer=3, dropout_layers=dropout_layers)
-        self.layer4 = MCVariationalDense(hidden_size, hidden_size, model_prob, model_lam, layer=4, dropout_layers=dropout_layers)
-        self.layer5 = MCVariationalDense(hidden_size, output_size, model_prob, model_lam, layer=5, dropout_layers=dropout_layers)
+        # self.layer4 = MCVariationalDense(hidden_size, hidden_size, model_prob, model_lam, layer=4, dropout_layers=dropout_layers)
+        self.layer4 = MCVariationalDense(hidden_size, output_size, model_prob, model_lam, layer=4, dropout_layers=dropout_layers)
         
 
     def forward(self, X):
         X = torch.tanh(self.layer1(X))
         X = torch.tanh(self.layer2(X))
         X = torch.tanh(self.layer3(X))  # New layer added
-        X = torch.tanh(self.layer4(X))
-        X = self.layer5(X)  # Output layer
+        # X = torch.tanh(self.layer4(X))
+        X = self.layer4(X)  # Output layer
         return X
 
     def regularization(self):
@@ -64,24 +83,30 @@ class MCVariationalNN(nn.Module):
             self.layer1.regularization() +
             self.layer2.regularization() +
             self.layer3.regularization() +  # Include new layer
-            self.layer4.regularization() +
-            self.layer5.regularization()
+            # self.layer4.regularization() +
+            self.layer4.regularization()
         )
 
 
+def mc_inference_train(model, N, n_samples=100):
+    model.eval()  # Keep dropout active
+    preds = torch.zeros((n_samples, N, 1))
+    with torch.no_grad():
+        for i in range(n_samples):
+            X, _, _, _, _, _ = get_data(N=100, D_X=3, N_test=500, sigma_obs=sigma, gap=False, sinc_noise_bool=sinc_noise_bool, seed=i)
+            X_train_torch = torch.tensor(np.array(X), dtype=torch.float32)
+            preds[i] = model(X_train_torch)
+    return preds.mean(dim=0), preds.std(dim=0), preds
 
 # MC Dropout inference
 def mc_inference(model, X, n_samples=100):
-    # model.eval()  # Keep dropout active
+    model.eval()  # Keep dropout active
     preds = torch.zeros((n_samples, X.size(0), 1))
     with torch.no_grad():
         for i in range(n_samples):
             preds[i] = model(X)
     return preds.mean(dim=0), preds.std(dim=0), preds
 
-
-import numpy as np
-import jax.numpy as jnp
 
 def get_data(N=50, D_X=3, sigma_obs=0.05, N_test=500, N_val=20, gap=True, seed=0, sinc_noise_bool=False):
     D_Y = 1  # Create 1D outputs
@@ -117,15 +142,15 @@ def get_data(N=50, D_X=3, sigma_obs=0.05, N_test=500, N_val=20, gap=True, seed=0
     if len(X_available) < N:
         raise ValueError(f"Not enough valid samples ({len(X_available)}) to select N={N}.")
 
-    # indices = np.linspace(0, len(X_available) - 1, N, dtype=int)
+    indices = np.linspace(0, len(X_available) - 1, N, dtype=int)
 
     np.random.seed(seed)
-    indices = np.random.choice(len(X_available), N, replace=False)
+    # indices = np.sort(np.random.choice(len(X_available), N, replace=False))
     X = X_available[indices]
 
     if sinc_noise_bool:
         sinc_noise = np.sinc(X[:,1])
-        Y = Y_available[indices] + sigma_obs * sinc_noise[:, None] * np.random.randn(N, D_Y) 
+        Y = Y_available[indices] + sinc_noise[:, None] * np.random.randn(N, D_Y)
     else:
         Y = Y_available[indices] + sigma_obs * np.random.randn(N, D_Y)
 
@@ -136,19 +161,96 @@ def get_data(N=50, D_X=3, sigma_obs=0.05, N_test=500, N_val=20, gap=True, seed=0
 
     # random indices in X_available for validation
     # np.random.seed(seed)
-    indices_val = np.random.choice(len(X_available), N_val, replace=False)
+    # indices_val = np.sort(np.random.choice(len(X_available), N_val, replace=False))
+    indices_val = np.linspace(0, len(X_available) - 1, N_val, dtype=int)
     X_val = X_available[indices_val]
     Y_val = Y_available[indices_val]
     if sinc_noise_bool:
         sinc_noise = np.sinc(X_val[:,1])
-        Y_val = Y_val + sigma_obs * sinc_noise[:, None] * np.random.randn(N_val, D_Y)
+        Y_val = Y_val + sinc_noise[:, None] * np.random.randn(N_val, D_Y)
     else:
         Y_val = Y_val + sigma_obs * np.random.randn(N_val, D_Y)
 
     assert X_val.shape == (N_val, D_X)
     assert Y_val.shape == (N_val, D_Y)
-    
     return X, Y, X_test, Y_true, X_val, Y_val
+
+
+
+def objective(trial):
+    # Sample a dropout rate
+    model_prob = trial.suggest_float("dropout_rate", 0.0, 0.5)
+    # hidden_size = trial.suggest_int("hidden_size", 16, 1024, step=16)
+    # model_lam = trial.suggest_float("model_lam", 1e-5, 5e-3, log=True)
+    # lr = trial.suggest_float("lr", 1e-5, 1e-2, log=True)
+
+    # Create model
+    model = MCVariationalNN(
+        input_size=3,
+        hidden_size=32,
+        output_size=1,
+        model_prob=model_prob,
+        model_lam=1e-3,
+        dropout_layers=[2, 3]
+    )
+
+    # Define loss and optimizer
+    criterion = nn.MSELoss()
+    optimizer = optim.Adam(model.parameters(), lr=1e-3)
+
+    # Get fixed training data
+    X, Y, _, _, _, _ = get_data(N=100, D_X=3, N_test=500, sigma_obs=sigma, gap=False, sinc_noise_bool=sinc_noise_bool, seed=42)
+    # X_train_torch = torch.tensor(np.array(X), dtype=torch.float32)
+    # Y_train_torch = torch.tensor(np.array(Y), dtype=torch.float32)
+
+
+    # _, _, X_true, Y_true, _, _ = get_data(N=100, D_X=3, N_test=500, sigma_obs=sigma, gap=False, sinc_noise_bool=sinc_noise_bool, seed=42)
+    # Compute true mean and std using sinc_noise
+    # Y_mean_true = torch.tensor(np.array(Y_true), dtype=torch.float32).squeeze()
+
+    ys = np.zeros((10000,100))
+    xs = np.zeros((10000,100))
+    for i in range(ys.shape[0]):
+        X, Y, _, _, _, _ = get_data(N=100, D_X=3, N_test=500, sigma_obs=sigma, gap=False, sinc_noise_bool=sinc_noise_bool, seed=i)
+        ys[i,:] = np.array(Y[:,0])
+        xs[i,:] = np.array(X[:,1])
+    Y_std  = ys.std(axis=0)
+    Y_mean = ys.mean(axis=0)
+    # Make tensor
+    Y_std = torch.tensor(np.array(Y_std), dtype=torch.float32)
+    Y_mean = torch.tensor(np.array(Y_mean), dtype=torch.float32)
+    
+    
+
+    for epoch in range(2000):
+        model.train()
+        optimizer.zero_grad()
+        X, Y, _, _, _, _ = get_data(N=100, D_X=3, N_test=500, sigma_obs=sigma, gap=False, sinc_noise_bool=sinc_noise_bool, seed=epoch)
+        # Perform MC Inference after training step
+        model.eval()
+        y_pred_mean, y_pred_std, _ = mc_inference_train(model, N=100, n_samples=500)
+
+        # Compute additional losses
+        mean_loss = criterion(y_pred_mean[:, 0], Y_mean) + model.regularization()
+        std_loss = criterion(y_pred_std[:, 0], Y_std)
+
+        # Combine all losses
+        total_loss = mean_loss + std_loss  
+
+        # Backpropagation
+        total_loss.backward()
+        optimizer.step()
+
+        # Report to Optuna
+        trial.report(total_loss.item(), epoch)
+
+        # Check for early stopping
+        if trial.should_prune():
+            raise optuna.TrialPruned()
+
+
+    return total_loss.item()
+
 
 
 
@@ -171,7 +273,54 @@ lr          = 0.001  # Learning rate
 seed = 416       # Random seed
 sigma = 0.35
 sinc_noise_bool = True
-_, _, X_test, Y_true, _, _ = get_data(N=150, D_X=3, N_test=500, sigma_obs=sigma, gap=True, sinc_noise_bool=sinc_noise_bool)
+_, _, X_test, Y_true, _, _ = get_data(N=150, D_X=3, N_test=500, sigma_obs=sigma, gap=False, sinc_noise_bool=sinc_noise_bool)
+
+# # Estimate mean and variance for the data
+# plt.figure()
+# ys = np.zeros((10000,150))
+# for i in range(ys.shape[0]):
+#     X, Y, _, _, _, _ = get_data(N=150, D_X=3, N_test=500, sigma_obs=sigma, gap=False, sinc_noise_bool=sinc_noise_bool, seed=i)
+#     # _, _, _, _, X, Y = get_data(N=150, D_X=3, N_test=500, sigma_obs=sigma, gap=False, sinc_noise_bool=sinc_noise_bool, seed=i)
+#     plt.plot(X[:,1], Y, "r.")
+#     ys[i,:] = np.array(Y[:,0])
+# plt.plot(X_test[:,1], Y_true[:,0], 'k-')
+# # plot ys
+# plt.figure()
+# # for i in range(1000):
+#     # plt.plot(X[:,1], ys[i,:], 'r.')
+# plt.plot(X_test[:,1], Y_true[:,0], 'k-')
+# # get a dist for Y for each X
+# Y_mean = ys.mean(axis=0)
+# Y_std  = ys.std(axis=0)
+# plt.plot(X[:,1], Y_mean)
+# plt.fill_between(
+#     X[:,1],
+#     (Y_mean - 2 * Y_std).flatten(),
+#     (Y_mean + 2 * Y_std).flatten(),
+#     color="lightblue",
+#     label="95% CI",
+#     alpha=0.75
+# )
+# # plt.show()
+
+# # Run the optimization
+# study = optuna.create_study(direction="minimize")
+# study.optimize(objective, n_trials=20)
+
+# Save the study
+# study.trials_dataframe().to_csv("optuna_trials_c.csv")
+# Load the study
+optuna_df = pd.read_csv("optuna_trials_c.csv")
+# optimal = optuna_df.loc[14,["value", 'params_dropout_rate', 'params_model_lam']]
+# study = optuna.load_study(study_name="optuna_trials.csv", storage="sqlite:///example.db")
+
+## PARAMETERS
+input_size = 3
+output_size = 1
+hidden_size = 32
+# model_prob  = optimal['params_dropout_rate']    # Dropout probability
+model_lam   = 1e-3   # Regularization coefficient
+lr          = 1e-3            # Learning rate
 
 
 # Convert to PyTorch tensors
@@ -179,7 +328,7 @@ X_test_torch = torch.tensor(np.array(X_test), dtype=torch.float32)
 
 # Subplot 4x4
 plt.figure(figsize=(15, 15))
-plt.title(f"MC Dropout with different seeds\nDropout probability: {model_prob}\n\n")
+# plt.title(f"MC Dropout with different seeds\nDropout probability: {model_prob}\n\n")
 plt.xticks([])
 plt.yticks([])
 plt.box(False)
@@ -206,17 +355,44 @@ seeds = [12, 123, 23, 234, 21, 321, 32, 11, 22, 33, 44, 55, 12772, 5543, 12356, 
 
 dropout_rates_dict = {
     0.1:None,
-    0.2:None,
     }
+trials = [13, 14, 15, 16]
 
-for idx, dr in enumerate(dropout_rates_dict.keys()):
+ys = np.zeros((200,100))
+xs = np.zeros((200,100))
+for i in range(ys.shape[0]):
+    X, Y, _, _, _, _ = get_data(N=100, D_X=3, N_test=500, sigma_obs=sigma, gap=False, sinc_noise_bool=False, seed=i)
+    ys[i,:] = np.array(Y[:,0])
+    xs[i,:] = np.array(X[:,1])
+Y_std  = ys.std(axis=0)
+Y_mean = ys.mean(axis=0)
+# Make tensor
+Y_std = torch.tensor(np.array(Y_std), dtype=torch.float32)
+Y_mean = torch.tensor(np.array(Y_mean), dtype=torch.float32)
 
+# plot ys and xs as datapoints
+plt.figure()
+for i in range(200):
+    plt.plot(xs[i,:], ys[i,:], 'r.')
+plt.grid()
+# plt.title("Data points")
+plt.xlabel("X")
+plt.ylabel("Y")
+plt.savefig("data_points_constant.pdf")
+plt.show()
+
+for idx, trial in enumerate(trials):
+    
     # random seed
     np.random.seed(seed)
     torch.manual_seed(seed)
+    optuna_df = pd.read_csv("optuna_trials.csv")
+    optimal = optuna_df.loc[trial,["value", 'params_dropout_rate', 'params_model_lam']]
+    model_prob  = optimal['params_dropout_rate']    # Dropout probability
+    model_lam   = optimal['params_model_lam'] 
 
     # Initialize model, loss function, and optimizer
-    model = MCVariationalNN(input_size, hidden_size, output_size, dr, model_lam, [2,3,4])
+    model = MCVariationalNN(input_size, hidden_size, output_size, model_prob, model_lam, [2,3])
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
     validation_error = []
@@ -227,12 +403,12 @@ for idx, dr in enumerate(dropout_rates_dict.keys()):
     epochs_no_improve = 0
 
     # Training
-    epochs = 20000
+    epochs = 10000
     for epoch in range(epochs):
         model.train()
         optimizer.zero_grad()
         
-        X, Y, _, _, _, _ = get_data(N=15, D_X=3, N_test=500, sigma_obs=sigma, gap=False, sinc_noise_bool=sinc_noise_bool, seed=epoch)
+        X, Y, _, _, _, _ = get_data(N=100, D_X=3, N_test=500, sigma_obs=sigma, gap=False, sinc_noise_bool=sinc_noise_bool, seed=epoch)
         X_train_torch = torch.tensor(np.array(X), dtype=torch.float32)
         Y_train_torch = torch.tensor(np.array(Y), dtype=torch.float32)
 
@@ -246,7 +422,7 @@ for idx, dr in enumerate(dropout_rates_dict.keys()):
         if epoch % 100 == 0:
             model.eval()  # Set model to evaluation mode
             with torch.no_grad():  # Disable gradient computation
-                _, _, _, _, X_val, Y_val = get_data(N=150, D_X=3, N_test=500, sigma_obs=sigma, gap=False, sinc_noise_bool=sinc_noise_bool, seed=epoch)
+                _, _, _, _, X_val, Y_val = get_data(N=100, D_X=3, N_test=500, sigma_obs=sigma, gap=False, sinc_noise_bool=sinc_noise_bool, seed=epoch)
                 val_outputs = model(torch.tensor(np.array(X_val), dtype=torch.float32))
                 val_loss = criterion(val_outputs, torch.tensor(np.array(Y_val), dtype=torch.float32))
                 validation_error.append(val_loss.item())
@@ -289,14 +465,14 @@ for idx, dr in enumerate(dropout_rates_dict.keys()):
 
 
     # Measure size of std_pred
-    dropout_rates_dict[dr] = std_pred.mean()
+    dropout_rates_dict[model_prob] = std_pred.mean()
 
     # Convert to numpy
     mean_pred = mean_pred.numpy()
     std_pred = std_pred.numpy()
 
     # plot in subplot   
-    plt.subplot(1, 2, idx+1)
+    plt.subplot(2, 2, idx+1)
     # plt.plot(X[:, 1], Y, "r.", label="Train Data", alpha=0.5)# Compute fixed shot noise standard deviation
     std_shot_noise_fixed = (sigma * np.random.randn(10000, 1)).std()
 
@@ -315,11 +491,11 @@ for idx, dr in enumerate(dropout_rates_dict.keys()):
     std_shot_noise[mask] = 0
     plt.fill_between(
         X_test[:, 1],
-        (Y_true[:,0] - 3 * std_shot_noise).flatten(),
-        (Y_true[:,0] + 3 * std_shot_noise).flatten(),
+        (Y_true[:,0] - 2 * std_shot_noise).flatten(),
+        (Y_true[:,0] + 2 * std_shot_noise).flatten(),
         color="orange",
-        label="Training data",
-        alpha=0.25
+        label="95% CI training data",
+        alpha=0.5
 
     )
 
@@ -331,8 +507,8 @@ for idx, dr in enumerate(dropout_rates_dict.keys()):
         (mean_pred - 2 * std_pred).flatten(),
         (mean_pred + 2 * std_pred).flatten(),
         color="lightblue",
-        label="95% CI",
-        alpha=0.75
+        label="95% CI prediction",
+        alpha=0.5
     )
     plt.plot(X_test[:,1], Y_true, "k--", lw=2.0, label="True mean")
     plt.grid()
@@ -340,10 +516,11 @@ for idx, dr in enumerate(dropout_rates_dict.keys()):
     plt.xlabel("X")
     plt.ylabel("Y")
     plt.ylim(-4, 4)
-    plt.title(f"Dropout rate: {dr}")
+    plt.title(f"Dropout rate: {model_prob:.2f}| Lambda: {model_lam:.5f}")
 plt.tight_layout()
-plt.savefig(f"MCDO/Code/DOMC/plots/MCDO_pytorch_sinc_unlimdata_Reg{model_lam}_1024_...._5L.pdf")
-# plt.savefig(f"MCDO/Code/DOMC/plots/MCDO_pytorch_unlimdata_Reg{model_lam}.pdf")
+plt.savefig(f"MCDO/Code/DOMC/plots/MCDO_pytorch_constant_unlimdata_Reg{model_prob}.pdf")
+# plt.savefig(f"MCDO/Code/DOMC/plots/MCDO_pytorch_sinc_unlimdata_Reg{model_prob}.pdf")
+
 # plt.show()
 
 # Extract keys (dropout rates) and values (uncertainty measures)

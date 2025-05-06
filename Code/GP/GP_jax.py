@@ -1,5 +1,21 @@
 from jax import config
 config.update("jax_enable_x64", True)
+import matplotlib as mpl
+
+# Use LaTeX-like font (Computer Modern)
+mpl.rcParams['text.usetex'] = False  # Don't use full LaTeX
+mpl.rcParams['mathtext.fontset'] = 'cm'  # Use Computer Modern for math
+mpl.rcParams['font.family'] = 'STIXGeneral'  # Close match to LaTeX text
+mpl.rcParams['font.size'] = 20
+mpl.rcParams['axes.titlesize'] = 20
+mpl.rcParams['axes.labelsize'] = 16
+mpl.rcParams['xtick.labelsize'] = 16
+mpl.rcParams['ytick.labelsize'] = 16
+mpl.rcParams['legend.fontsize'] = 14
+mpl.rcParams['figure.titlesize'] = 16
+mpl.rcParams['axes.labelweight'] = 'bold'
+mpl.rcParams['axes.titleweight'] = 'bold'
+
 
 import gpjax as gpx
 from jax import random as jr
@@ -10,8 +26,8 @@ from GP_RBF import optimize_hyperparameters, kernel as Knl, log_marginal_likelih
 import numpy as np
 
 # true function
-# f = lambda x: 10 * jnp.sin(x)
-f = lambda x: jnp.sin(x) + x/3 + (x**2)/5 
+f = lambda x: 10 * jnp.sin(x)
+# f = lambda x: jnp.sin(x) + x/3 + (x**2)/5 
 
 # Generate data
 key = jr.PRNGKey(123)
@@ -98,13 +114,13 @@ plt.plot(xtest, f(xtest),  'y-', label="True")
 plt.plot(X_train, y_train, "ro", label="Training Points")
 plt.legend(loc='upper right')
 plt.grid()
-plt.savefig('plots/MyGPvsGPJax2.pdf')
+plt.savefig('plots/MyGPvsGPJax.pdf')
 plt.show()
 plt.close()
 
 X = X.flatten()
 fig, axes = plt.subplots(2, 1, figsize=(10, 12))
-fig.suptitle("Posterior Samples from Gaussian Process", fontsize=16)
+# fig.suptitle("Posterior Samples from Gaussian Process", fontsize=16)
 
 # Generate samples and plot from the posterior
 num_samples = 5
@@ -115,12 +131,14 @@ axes[0].fill_between(
     xtest.flatten(), 
     f_mean_opt.flatten() - 2 * np.sqrt(np.diagonal(f_var_opt)).flatten(), 
     f_mean_opt.flatten() + 2 * np.sqrt(np.diagonal(f_var_opt)).flatten(), 
-    color='gray', alpha=0.2, label="95% Confidence Interval"
+    color='lightblue', label="95% Confidence Interval"
 )
 axes[0].plot(X_train, y_train, "ro", label="Training Points")
-axes[0].plot(xtest, f(xtest), "m-", label="True function")
+axes[0].plot(xtest, f(xtest), label="True function", color='m')
 axes[0].legend()
 axes[0].set_title(f"\nOptimized RBF Kernel:  σ={optimized_params[1]:.2f}, l={optimized_params[0]:.2f}, NLML={lml:.2f}")
+# grid
+axes[0].grid()
 axes[0].set_xlabel("x")
 axes[0].set_ylabel("f(x)")
 
@@ -132,17 +150,19 @@ axes[1].fill_between(
     xtest.flatten(), 
     pred_mean - 2 * pred_std, 
     pred_mean + 2 * pred_std, 
-    color='gray', alpha=0.2, label="95% Confidence Interval"
+    color='lightblue', label="95% Confidence Interval"
 )
 axes[1].plot(X_train, y_train, "ro", label="Training Points")
-axes[1].plot(xtest, f(xtest).flatten(), label="True function", color='blue')
+axes[1].plot(xtest, f(xtest).flatten(), label="True function", color='m')
 axes[1].legend()
 axes[1].set_title(f"\nGP-Jax:  σ={np.sqrt(opt_posterior.prior.kernel.variance.value):.2f}, l = {opt_posterior.prior.kernel.lengthscale.value:.2f}, NLML={history._value[-1]:.2f}")
 axes[1].set_xlabel("x")
+# grid
+axes[1].grid()
 axes[1].set_ylabel("f(x)")
 
 plt.tight_layout()
-plt.savefig("plots/compare_jax2.pdf")
+plt.savefig("plots/compare_jax.pdf")
 plt.show()
 print('ok')
 

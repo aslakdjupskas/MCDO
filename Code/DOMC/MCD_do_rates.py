@@ -37,12 +37,11 @@ class MCVariationalDense(nn.Module):
 
     def forward(self, X):
         "Dropout only on the selected layers and during training"
-        if  (self.training and self.layer in self.dropout_layers) or self.layer in self.dropout_layers:
-        # if (not self.training) and self.layer in self.dropout_layers:
+        if (self.training and self.layer in self.dropout_layers) or self.layer in self.dropout_layers:
             if self.layer in self.dropout_layers:
                 model_W = self.model_M * torch.bernoulli(torch.full_like(self.model_M, 1 - self.model_prob)) / (1 - self.model_prob)      
-            elif self.training: # Only scale in layers with dropout
-                model_W = self.model_M * torch.bernoulli(torch.full_like(self.model_M, 1 - self.model_prob))
+            # elif self.training: # Only scale in layers with dropout
+            #     model_W = self.model_M * torch.bernoulli(torch.full_like(self.model_M, 1 - self.model_prob))
 
         else:
             model_W = self.model_M
@@ -97,7 +96,7 @@ def mc_inference(model, X, n_samples=100):
 import numpy as np
 import jax.numpy as jnp
 
-def get_data(N=150, D_X=3, sigma_obs=0.5, N_test=500, N_val=20, gap=True, seed=0):
+def get_data(N=50, D_X=3, sigma_obs=0.05, N_test=500, N_val=20, gap=True, seed=0):
     D_Y = 1  # Create 1D outputs
     np.random.seed(0)
     
@@ -154,6 +153,8 @@ def get_data(N=150, D_X=3, sigma_obs=0.5, N_test=500, N_val=20, gap=True, seed=0
     return X, Y, X_test, Y_true, X_val, Y_val
 
 
+sigma = 0.05
+X, Y, X_test, Y_true, _, _ = get_data(N=150, D_X=3, N_test=500, sigma_obs=sigma, gap=True)
 
 # plot data
 # plt.figure()
@@ -168,12 +169,10 @@ def get_data(N=150, D_X=3, sigma_obs=0.5, N_test=500, N_val=20, gap=True, seed=0
 input_size = 3
 output_size = 1
 hidden_size = 32
-model_prob  = 0.15    # Dropout probability
+# model_prob  = 0.2    # Dropout probability
 model_lam   = 1e-3   # Regularization coefficient
 lr          = 0.001  # Learning rate
-seed        = 169      # Random seed
-sigma       = 0.05
-X, Y, X_test, Y_true, _, _ = get_data(N=150, D_X=3, N_test=500, sigma_obs=sigma, gap=True)
+
 
 
 # Convert to PyTorch tensors
@@ -182,8 +181,8 @@ Y_train_torch = torch.tensor(np.array(Y), dtype=torch.float32)
 X_test_torch = torch.tensor(np.array(X_test), dtype=torch.float32)
 
 # Subplot 4x4
-plt.figure(figsize=(5, 10))
-# plt.title(f"Weights Distribution for Different L2 Regularization Coefficients\n\n")
+plt.figure(figsize=(15, 15))
+# plt.title(f"MC Dropout with different dropout probabilities\n\n")
 plt.xticks([])
 plt.yticks([])
 plt.box(False)
@@ -203,46 +202,26 @@ mean_fcn = {
 }
 
 # 16, seeds 
-lambdas = [1e-2, 1e-3, 1e-5, 1e-6, 1e-8, 0]
-lambdas = {
-    1e-5:{
-        "Mean": [],
-        "Std": [],
-        "preds": [], 
-    },
-    1e-12:{
-        "Mean": [],
-        "Std": [],
-        "preds": [], 
-    }#,
-    # 1e-6:{
-    #     "Mean": [],
-    #     "Std": [],
-    #     "preds": [], 
-    # },
-    # 1e-7:{
-    #     "Mean": [],
-    #     "Std": [],
-    #     "preds": [], 
-    # },
-    # 1e-8:{
-    #     "Mean": [],
-    #     "Std": [],
-    #     "preds": [], 
-    # },
-    # 0:{
-    #     "Mean": [],
-    #     "Std": [],
-    #     "preds": [], 
-    # }
-
+# seeds = [12, 123, 23, 234, 21, 321, 32, 11, 22, 33, 44, 55, 12772, 5543, 12356, 66642]
+# seeds = [i for i in range(50)]
+# 9 seeds
+# seeds = [20, 21, 22, 23, 24, 52, 62, 27, 82]
+predictions_all = []
+error_sizes = {
+    0.05:None,
+    0.1:None,
+    0.2:None,
+    0.3:None,
+    0.45:None,
+    0.6:None,
 }
+do_rates = [0.05, 0.1, 0.15, 0.2, 0.3, 0.5]
+#do_rates = [0.15]
+for idx, model_prob in enumerate(do_rates):
 
-
-for idx, model_lam in enumerate(lambdas.keys()):
     # random seed
-    np.random.seed(seed)
-    torch.manual_seed(seed)
+    # np.random.seed(0)
+    # torch.manual_seed(0)
 
     # Initialize model, loss function, and optimizer
     model = MCVariationalNN(input_size, hidden_size, output_size, model_prob, model_lam, [2,3])
@@ -292,63 +271,34 @@ for idx, model_lam in enumerate(lambdas.keys()):
     # MC Dropout Inference
     # torch.save(model.state_dict(), f"MCDO/Code/DOMC/models/model_lambda{model_lam}_doRate{model_prob}_seed{seed}_noise{sigma}.pth")
     model.eval()
-    # List of weight arrays
-    weights = [
-        model.layer1.model_M.detach().numpy().flatten(),
-        model.layer1.model_m.detach().numpy(),
-        model.layer2.model_M.detach().numpy().flatten(),
-        model.layer2.model_m.detach().numpy(),
-        model.layer3.model_M.detach().numpy().flatten(),
-        model.layer3.model_m.detach().numpy(),
-        model.layer4.model_M.detach().numpy().flatten(),
-        model.layer4.model_m.detach().numpy()
-    ]
 
-    # Choose an axis for concatenation (axis=0 stacks vertically, axis=1 stacks horizontally)
-    weights_array = np.concatenate(weights, axis=0)  # Adjust axis as needed
+    # plt.figure()
+    # plt.plot(validation_error, label="Validation Loss")
+    # plt.plot(loss_history, label="Training loss")
+    # plt.title(f"Training error for {name}")
+    # plt.xlabel("Epoch")
+    # plt.ylabel("Loss")
+    # plt.yscale("log")
+    # plt.legend()
+    # plt.grid()
+    # plt.show()
 
     mean_pred, std_pred, predictions = mc_inference(model, X_test_torch, n_samples=20000)
-
-    lambdas[model_lam]["Mean"].append(mean_pred)
-    lambdas[model_lam]["Std"].append(std_pred)
-    lambdas[model_lam]["preds"].append(predictions.squeeze())
+    predictions_all.append(predictions)
 
     # Convert to numpy
     mean_pred = mean_pred.numpy()
     std_pred = std_pred.numpy()
 
-    # plot in subplot  
-    plt.subplot(2, 1, idx+1)
-    # Plot histogram
-    plt.hist(weights_array, bins=30, alpha=0.75, color='b', edgecolor='black')
-    plt.xlabel("Weight Value")
-    plt.ylabel("Frequency")
-    plt.title(f'\nRegularization: {model_lam}')
-    plt.grid(True)
+    # Append std size to error_sizes
+    error_sizes[model_prob] = np.linalg.norm(std_pred)
 
-    
-
-plt.tight_layout()
-# plt.savefig(f"MCDO/Code/DOMC/plots/MCDO_pytorch_SEEDSdifferDO{model_prob}_Reg{model_lam}_NoDoTraining.pdf")
-plt.savefig(f"MCDO/Code/DOMC/plots/weights/weight_distributionL2_doReg.pdf")
-# plt.show()
-
-# plot 1x3
-plt.figure(figsize=(6, 12))
-plt.xticks([])
-plt.yticks([])
-plt.box(False)
-# plt.title(f"\nMC Dropout Neural Network Regression\n Hidden Size: {hidden_size} | Dropout Prob: {model_prob}\n\n")
-# Plot predictions
-for i, lamda in enumerate(lambdas.keys()):
-    mean_pred = lambdas[lamda]["Mean"][0]
-    std_pred = lambdas[lamda]["Std"][0]
-    predictions = lambdas[lamda]["preds"][0]
-    plt.subplot(2, 1, i+1)
-    plt.plot(X[:, 1], Y[:,0], "r.", label="Train Data", alpha=0.5)
+    # plot in subplot   
+    plt.subplot(2, 3, idx+1)
+    plt.plot(X[:, 1], Y, "r.", label="Train Data", alpha=0.5)
     plt.plot(X_test[:,1], mean_pred, label="MC Mean Prediction", color="blue")
-    for i in range(150):
-        plt.plot(X_test[:,1], predictions[-200+i], color="gray", alpha=0.05)
+    for i in range(250):
+        plt.plot(X_test[:,1], predictions[5000+i], color="gray", alpha=0.05)
     plt.fill_between(
         X_test[:,1],
         (mean_pred - 2 * std_pred).flatten(),
@@ -356,17 +306,36 @@ for i, lamda in enumerate(lambdas.keys()):
         color="lightblue",
         label="95% CI",
     )
-    plt.plot(X_test[:,1], Y_true[:,0], "k--", lw=2.0, label="True mean")
+    plt.plot(X_test[:,1], Y_true, "k--", lw=2.0, label="True mean")
     plt.grid()
     plt.legend()
     plt.xlabel("X")
     plt.ylabel("Y")
-    plt.title(f"\nRegularization: {lamda}")
     plt.ylim(-4, 4)
-
+    plt.title(f"Dropout Rate {model_prob}")
 plt.tight_layout()
-plt.savefig(f"MCDO/Code/DOMC/plots/weights/some_predictionsL2_doReg.pdf")
-plt.show()
+# plt.savefig(f"MCDO/Code/DOMC/plots/MCDO_pytorch_SEEDSdifferDO{model_prob}_Reg{model_lam}_NoDoTraining.pdf")
+plt.savefig(f"MCDO/Code/DOMC/plots/MCDO_DOrateDiffer.pdf")
+# plt.show()
+
+# Plot a histogram of the error sizes
+plt.figure()
+plt.hist(error_sizes.values(), bins=30, alpha=0.7)
+plt.xlabel("Error Size")
+plt.ylabel("Frequency")
+plt.title("Histogram of Error Sizes")
+plt.grid()
+
+# Plot a bar plot of the error sizes
+plt.figure()
+plt.bar(error_sizes.keys(), error_sizes.values())
+plt.xlabel("Dropout Rate")
+plt.ylabel("Error Size")
+plt.title("Error Sizes for Different Dropout Rates")
+plt.grid()
+plt.savefig(f"MCDO/Code/DOMC/plots/MCDO_DOrateDiffer_histogram.pdf")
+# plt.show()
+
 
 
 print("Done")

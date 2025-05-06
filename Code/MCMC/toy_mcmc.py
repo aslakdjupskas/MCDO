@@ -1,6 +1,21 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+import matplotlib as mpl
+
+# Use LaTeX-like font (Computer Modern)
+mpl.rcParams['text.usetex'] = False  # Don't use full LaTeX
+mpl.rcParams['mathtext.fontset'] = 'cm'  # Use Computer Modern for math
+mpl.rcParams['font.family'] = 'STIXGeneral'  # Close match to LaTeX text
+mpl.rcParams['font.size'] = 20
+mpl.rcParams['axes.titlesize'] = 20
+mpl.rcParams['axes.labelsize'] = 16
+mpl.rcParams['xtick.labelsize'] = 16
+mpl.rcParams['ytick.labelsize'] = 16
+mpl.rcParams['legend.fontsize'] = 14
+mpl.rcParams['figure.titlesize'] = 16
+mpl.rcParams['axes.labelweight'] = 'bold'
+mpl.rcParams['axes.titleweight'] = 'bold'
 
 # Target distribution: Normal(3, 2)
 def target_distribution(x):

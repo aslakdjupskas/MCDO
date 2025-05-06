@@ -5,6 +5,23 @@ from jax.scipy.linalg import cholesky, solve
 import numpy as np
 import jax
 
+import matplotlib as mpl
+
+# Use LaTeX-like font (Computer Modern)
+mpl.rcParams['text.usetex'] = False  # Don't use full LaTeX
+mpl.rcParams['mathtext.fontset'] = 'cm'  # Use Computer Modern for math
+mpl.rcParams['font.family'] = 'STIXGeneral'  # Close match to LaTeX text
+mpl.rcParams['font.size'] = 20
+mpl.rcParams['axes.titlesize'] = 20
+mpl.rcParams['axes.labelsize'] = 16
+mpl.rcParams['xtick.labelsize'] = 16
+mpl.rcParams['ytick.labelsize'] = 16
+mpl.rcParams['legend.fontsize'] = 14
+mpl.rcParams['figure.titlesize'] = 16
+mpl.rcParams['axes.labelweight'] = 'bold'
+mpl.rcParams['axes.titleweight'] = 'bold'
+
+
 from jax import config
 config.update("jax_enable_x64", True)
 
@@ -108,7 +125,7 @@ def optimize_hyperparameters(X_train, y_train, init_params, learning_rate=0.01, 
     return optimized_params
 
 
-np.random.seed(9)
+np.random.seed(1)
 n_samples = 200
 X = np.linspace(-3, 3, n_samples).flatten()[:, None]
 y = np.sin(2*X).flatten() + 0.01 * np.random.randn(n_samples)
@@ -116,9 +133,9 @@ y = np.sin(4*X).flatten() + X.flatten()/3 + (X.flatten()**2)/5
 
 
 # Randomly sample indices
-n_train = 5  # Number of training points
+n_train = 10  # Number of training points
 random_indices = np.random.choice(len(X), size=n_train, replace=False)
-random_indices = [i for i in range(0,n_samples, int(np.floor(n_samples/(n_train-1))))]
+# random_indices = [i for i in range(0,n_samples, int(np.floor(n_samples/(n_train-1))))]
 # Training data based on random indices
 X_train = X[random_indices]
 y_train = y[random_indices] + 0.01 * np.random.randn(len(random_indices))
@@ -164,42 +181,45 @@ f_var = K_test_test - v.T@v
 # plot the posterior samples
 X = X.flatten()
 fig, axes = plt.subplots(2, 1, figsize=(10, 12))
-fig.suptitle("Posterior Samples from Gaussian Process", fontsize=16)
+# fig.suptitle("Posterior Samples from Gaussian Process", fontsize=16)
 
 # Generate samples and plot from the posterior
-num_samples = 8
+num_samples = 50
 for i in range(num_samples):
-    axes[0].plot(X, np.random.multivariate_normal(f_mean_opt, f_var_opt))  # Plot the posterior samples
+    axes[0].plot(X, np.random.multivariate_normal(f_mean_opt, f_var_opt), color="gray", alpha=0.05)  # Plot the posterior samples
 axes[0].plot(X, f_mean_opt, color='black', label="Predictive Mean", linewidth=2)
 axes[0].fill_between(
     X, 
     f_mean_opt - 2 * np.sqrt(np.diagonal(f_var_opt)), 
     f_mean_opt + 2 * np.sqrt(np.diagonal(f_var_opt)), 
-    color='gray', alpha=0.2, label="95% Confidence Interval"
+    color='lightblue', label="95% Confidence Interval"
 )
 axes[0].plot(X_train, y_train, "ro", label="Training Points")
-# axes[0].plot(X, y, "m-", label="True function")
+axes[0].plot(X, y, "m-", label="True function")
 axes[0].legend()
 axes[0].set_title("Optimized RBF and Periodic Kernel")
 axes[0].set_xlabel("x")
 axes[0].set_ylabel("f(x)")
+# grid
+axes[0].grid()
 
 # Second plot
 for i in range(num_samples):
-    axes[1].plot(X, np.random.multivariate_normal(f_mean, f_var))  # Plot the posterior samples
+    axes[1].plot(X, np.random.multivariate_normal(f_mean, f_var),  color="gray", alpha=0.05)  # Plot the posterior samples
 axes[1].plot(X, f_mean, color='black', label="Predictive Mean", linewidth=2)
 axes[1].fill_between(
     X, 
     f_mean - 2 * np.sqrt(np.diagonal(f_var)), 
     f_mean + 2 * np.sqrt(np.diagonal(f_var)), 
-    color='gray', alpha=0.2, label="95% Confidence Interval"
+    color='lightblue', label="95% Confidence Interval"
 )
 axes[1].plot(X_train, y_train, "ro", label="Training Points")
-# axes[1].plot(X, y, "m-", label="True function")
+axes[1].plot(X, y, "m-", label="True function")
 axes[1].legend()
 axes[1].set_title("Non optimized RBF and Periodic Kernel")
 axes[1].set_xlabel("x")
 axes[1].set_ylabel("f(x)")
+axes[1].grid()
 
 plt.tight_layout()
 plt.savefig("plots/GP_npyrofcn.pdf")

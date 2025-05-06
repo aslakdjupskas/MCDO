@@ -6,6 +6,25 @@ import torch.optim as optim
 import jax.numpy as jnp
 import numpy as np
 
+
+import matplotlib as mpl
+
+# Use LaTeX-like font (Computer Modern)
+mpl.rcParams['text.usetex'] = False  # Don't use full LaTeX
+mpl.rcParams['mathtext.fontset'] = 'cm'  # Use Computer Modern for math
+mpl.rcParams['font.family'] = 'STIXGeneral'  # Close match to LaTeX text
+mpl.rcParams['font.size'] = 20
+mpl.rcParams['axes.titlesize'] = 20
+mpl.rcParams['axes.labelsize'] = 16
+mpl.rcParams['xtick.labelsize'] = 16
+mpl.rcParams['ytick.labelsize'] = 16
+mpl.rcParams['legend.fontsize'] = 14
+mpl.rcParams['figure.titlesize'] = 16
+mpl.rcParams['axes.labelweight'] = 'bold'
+mpl.rcParams['axes.titleweight'] = 'bold'
+
+
+
 # MC Variational Dense Layer
 class MCVariationalDense(nn.Module):
     def __init__(self, n_in, n_out, model_prob, model_lam, layer, dropout_layers):
@@ -20,10 +39,12 @@ class MCVariationalDense(nn.Module):
 
     def forward(self, X):
         "Dropout only on the selected layers and during training"
-        if self.training or self.layer in self.dropout_layers:
+        if (self.training and self.layer in self.dropout_layers) or self.layer in self.dropout_layers:
+        # if not self.training and self.layer in self.dropout_layers:
             if self.training: new_model_prob = self.model_prob* 0.25
             else: new_model_prob = self.model_prob
-            model_W = self.model_M * torch.bernoulli(torch.full_like(self.model_M, 1 - self.model_prob)) / (1 - self.model_prob)      
+                
+            model_W = self.model_M * torch.bernoulli(torch.full_like(self.model_M, 1 - self.model_prob)) / (1 - self.model_prob) 
         else:
             model_W = self.model_M
         output = torch.mm(X, model_W) + self.model_m
@@ -148,13 +169,13 @@ X, Y, X_test, Y_true, _, _ = get_data(N=150, D_X=3, N_test=500, gap=True)
 
 
 
-input_size = 3
+input_size = 3  
 output_size = 1
 hidden_size = 32
-model_prob  = 0.3   # Dropout probability
-model_lam   = 0  # Regularization coefficient
+model_prob  = 0.15   # Dropout probability
+model_lam   = 0.001  # Regularization coefficient
 lr          = 0.001 # Learning rate
-seed        = 10
+seed        = 45
 np.random.seed(seed)
 
 
@@ -165,19 +186,19 @@ X_test_torch = torch.tensor(np.array(X_test), dtype=torch.float32)
 
 # Subplot 3x3
 plt.figure(figsize=(15, 15))
-plt.title(f"MC Dropout on different layers\nDropout probability: {model_prob}\n\n")
+# plt.title(f"MC Dropout on different layers\nDropout probability: {model_prob}\n\n")
 plt.xticks([])
 plt.yticks([])
 plt.box(False)
 
 dropout_layers = {
-    'Middle layers':[2, 3],
+    # 'Middle layers':[2, 3],
     'All layers':[1, 2, 3, 4],
     'First layer':[1],
     'Second layer':[2],
     'Third layer':[3],
     'Last layer':[4],
-    # 'Middle layers':[2, 3],
+    'Second and Third layers':[2, 3],
     'First two layers':[1, 2],
     'Last two layers':[3, 4],
     'First and last layer':[1, 4]
@@ -218,7 +239,7 @@ for idx, (name, layers) in enumerate(dropout_layers.items()):
         loss.backward()
         optimizer.step()
         
-        if epoch % 1 == 0:
+        if epoch % 100 == 0:
             model.eval()  # Set model to evaluation mode
             with torch.no_grad():  # Disable gradient computation
                 _, _, _, _, X_val, Y_val = get_data(N=150, D_X=3, N_test=500, gap=True, seed=epoch)
@@ -284,12 +305,12 @@ for idx, (name, layers) in enumerate(dropout_layers.items()):
     plt.xlabel("X")
     plt.ylabel("Y")
     plt.ylim(-4, 4)
-    plt.title(f"\nDropout on: {name}")
+    plt.title(f"\n{name}")
 plt.tight_layout()
-# plt.savefig(f"MCDO/Code/DOMC/plots/MCDO_pytorch_layersdifferDO{model_prob}_Reg{model_lam}.pdf")
+plt.savefig(f"MCDO/Code/DOMC/plots/MCDO_pytorch_layersdifferDO{model_prob}_Reg{model_lam}.pdf")
 plt.show()
 
-from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacfgg
 # Loop through the mean functions and plot the ACF and PACF in a 3x3 subplot
 plt.figure(figsize=(15, 15))
 plt.title("ACF and PACF of the mean functions")

@@ -6,6 +6,23 @@ import torch.optim as optim
 import jax.numpy as jnp
 import numpy as np
 
+import matplotlib as mpl
+
+# Use LaTeX-like font (Computer Modern)
+mpl.rcParams['text.usetex'] = False  # Don't use full LaTeX
+mpl.rcParams['mathtext.fontset'] = 'cm'  # Use Computer Modern for math
+mpl.rcParams['font.family'] = 'STIXGeneral'  # Close match to LaTeX text
+mpl.rcParams['font.size'] = 20
+mpl.rcParams['axes.titlesize'] = 20
+mpl.rcParams['axes.labelsize'] = 16
+mpl.rcParams['xtick.labelsize'] = 16
+mpl.rcParams['ytick.labelsize'] = 16
+mpl.rcParams['legend.fontsize'] = 14
+mpl.rcParams['figure.titlesize'] = 16
+mpl.rcParams['axes.labelweight'] = 'bold'
+mpl.rcParams['axes.titleweight'] = 'bold'
+
+
 # MC Variational Dense Layer
 class MCVariationalDense(nn.Module):
     def __init__(self, n_in, n_out, model_prob, model_lam, layer, dropout_layers):
@@ -20,7 +37,8 @@ class MCVariationalDense(nn.Module):
 
     def forward(self, X):
         "Dropout only on the selected layers and during training"
-        if self.training or self.layer in self.dropout_layers:
+        # if (self.training and self.layer in self.dropout_layers) or self.layer in self.dropout_layers:
+        if not self.training and self.layer in self.dropout_layers:
             if self.layer in self.dropout_layers:
                 model_W = self.model_M * torch.bernoulli(torch.full_like(self.model_M, 1 - self.model_prob)) / (1 - self.model_prob)      
             elif self.training: # Only scale in layers with dropout
@@ -136,8 +154,8 @@ def get_data(N=50, D_X=3, sigma_obs=0.05, N_test=500, N_val=20, gap=True, seed=0
     return X, Y, X_test, Y_true, X_val, Y_val
 
 
-sigma = 0.05
-X, Y, X_test, Y_true, _, _ = get_data(N=150, D_X=3, N_test=500, sigma_obs=sigma, gap=True)
+sigma = 0.2
+X, Y, X_test, Y_true, _, _ = get_data(N=50, D_X=3, N_test=500, sigma_obs=sigma, gap=True)
 
 # plot data
 # plt.figure()
@@ -152,8 +170,8 @@ X, Y, X_test, Y_true, _, _ = get_data(N=150, D_X=3, N_test=500, sigma_obs=sigma,
 input_size = 3
 output_size = 1
 hidden_size = 32
-model_prob  = 0.2    # Dropout probability
-model_lam   = 1e-3   # Regularization coefficient
+model_prob  = 0.15    # Dropout probability
+model_lam   = 0.1   # Regularization coefficient
 lr          = 0.001  # Learning rate
 
 
@@ -165,7 +183,7 @@ X_test_torch = torch.tensor(np.array(X_test), dtype=torch.float32)
 
 # Subplot 4x4
 plt.figure(figsize=(15, 15))
-plt.title(f"MC Dropout with different seeds\nDropout probability: {model_prob}\n\n")
+# plt.title(f"MC Dropout with different seeds\nDropout probability: {model_prob}\n\n")
 plt.xticks([])
 plt.yticks([])
 plt.box(False)
@@ -185,21 +203,24 @@ mean_fcn = {
 }
 
 # 16, seeds 
-seeds = [12, 123, 23, 234, 21, 321, 32, 11, 22, 33, 44, 55, 12772, 5543, 12356, 66642]
+# seeds = [12, 123, 23, 234, 21, 321, 32, 11, 22, 33, 44, 55, 12772, 5543, 12356, 66642]
 # seeds = [i for i in range(50)]
 # 9 seeds
-# seeds = [20, 21, 22, 23, 24, 52, 62, 27, 82]
+# seeds = [32, 21, 123456, 66642, 294, 5932, 24456, 68998, 3422] #, 24, 52, 62, 27, 82]
 predictions_all = []
-
+# seeds = [11, 22, 33, 44]
+# seeds = [21, 32, 43, 54]
+seeds = [12, 234, 21, 321]
 
 for idx, seed in enumerate(seeds):
 
     # random seed
+    # seed = np.random.randint(0, 10000)
     np.random.seed(seed)
     torch.manual_seed(seed)
 
     # Initialize model, loss function, and optimizer
-    model = MCVariationalNN(input_size, hidden_size, output_size, model_prob, model_lam, [2,3])
+    model = MCVariationalNN(input_size, hidden_size, output_size, model_prob, model_lam, [1,2,3])
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
     validation_error = []
@@ -210,7 +231,7 @@ for idx, seed in enumerate(seeds):
     epochs_no_improve = 0
 
     # Training
-    epochs = 12750
+    epochs = 10000
     for epoch in range(epochs):
         model.train()
         optimizer.zero_grad()
@@ -221,26 +242,30 @@ for idx, seed in enumerate(seeds):
         
         if epoch % 1000 == 0:
             model.eval()  # Set model to evaluation mode
-            with torch.no_grad():  # Disable gradient computation
-                _, _, _, _, X_val, Y_val = get_data(N=150, D_X=3, N_test=500, gap=True, seed=epoch)
-                # TODO: Add read training data
-                val_outputs = model(torch.tensor(np.array(X_val), dtype=torch.float32))
-                val_loss = criterion(val_outputs, torch.tensor(np.array(Y_val), dtype=torch.float32))
-                validation_error.append(val_loss.item())
-                loss_history.append(loss.item())
+            # with torch.no_grad():  # Disable gradient 
+                # seed = np.random.randint(0, 10000)
+                # _, _, _, _, X_val, Y_val = get_data(N=150, D_X=3, N_test=500, gap=True, seed=seed)
+                # np.random.seed(seed)
+                # torch.manual_seed(seed)
 
-            print(f"Epoch {epoch}, Loss: {loss.item():.4f}, Val Loss: {val_loss.item():.4f}")
+                # # TODO: Add read training data
+                # val_outputs = model(torch.tensor(np.array(X_val), dtype=torch.float32))
+                # val_loss = criterion(val_outputs, torch.tensor(np.array(Y_val), dtype=torch.float32))
+                # validation_error.append(val_loss.item())
+                # loss_history.append(loss.item())
 
-            # Check early stopping condition
-            if val_loss < best_val_loss - min_delta:
-                best_val_loss = val_loss
-                epochs_no_improve = 0  # Reset counter
-            else:
-                epochs_no_improve += 1  # Increment counter
+            # print(f"Epoch {epoch}, Loss: {loss.item():.4f}, Val Loss: {val_loss.item():.4f}")
 
-            if epochs_no_improve >= patience and epoch > 2*patience:
-                print(f"Early stopping at epoch {epoch}, best validation loss: {best_val_loss:.4f}")
-                break  # Stop training
+            # # Check early stopping condition
+            # if val_loss < best_val_loss - min_delta:
+            #     best_val_loss = val_loss
+            #     epochs_no_improve = 0  # Reset counter
+            # else:
+            #     epochs_no_improve += 1  # Increment counter
+
+            # if epochs_no_improve >= patience and epoch > 2*patience:
+            #     print(f"Early stopping at epoch {epoch}, best validation loss: {best_val_loss:.4f}")
+            #     break  # Stop training
             
             # validation_error.append()
     # MC Dropout Inference
@@ -266,7 +291,7 @@ for idx, seed in enumerate(seeds):
     std_pred = std_pred.numpy()
 
     # plot in subplot   
-    plt.subplot(4, 4, idx+1)
+    plt.subplot(2, 2, idx+1)
     plt.plot(X[:, 1], Y, "r.", label="Train Data", alpha=0.5)
     plt.plot(X_test[:,1], mean_pred, label="MC Mean Prediction", color="blue")
     for i in range(250):
@@ -284,11 +309,12 @@ for idx, seed in enumerate(seeds):
     plt.xlabel("X")
     plt.ylabel("Y")
     plt.ylim(-4, 4)
-    plt.title(f"Seed {seed}\nEpochs: {epoch}")
+    # plt.title(f"Seed {seed}\n")
+    print(i+1)
 plt.tight_layout()
 # plt.savefig(f"MCDO/Code/DOMC/plots/MCDO_pytorch_SEEDSdifferDO{model_prob}_Reg{model_lam}_NoDoTraining.pdf")
-plt.savefig(f"MCDO/Code/DOMC/plots/MCDO_pytorch_SEEDSdifferDO{model_prob}_Reg{model_lam}.pdf")
-# plt.show()
+plt.savefig(f"MCDO/Code/DOMC/plots/MCDO_pytorch_SEEDSdifferDO{model_prob}_Reg{model_lam}_sigma{sigma}_report_appendix.pdf")
+plt.show()
 
 # plot all predictions mean, std, and samples from predictions_all
 predictions_all = np.array(predictions_all)
@@ -313,9 +339,10 @@ plt.grid()
 plt.legend()
 plt.xlabel("X")
 plt.ylabel("Y")
-plt.title("MC Dropout Neural Network Regression")
+# plt.title("MC Dropout Ensemble seeds")
 # plt.savefig(f"MCDO/Code/DOMC/plots/mergedModels{model_prob}_Reg{model_lam}_NoDoTraining.pdf")
-plt.savefig(f"MCDO/Code/DOMC/plots/mergedModels{model_prob}_Reg{model_lam}.pdf")
+# plt.savefig(f"MCDO/Code/DOMC/plots/mergedModels{model_prob}_Reg{model_lam}4x4.pdf")
+plt.savefig(f"MCDO/Code/DOMC/plots/Ensemble_mergedModels{model_prob}_Reg{model_lam}_sigma{sigma}_report_decDO.pdf")
 plt.show()
 
 

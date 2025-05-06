@@ -9,6 +9,22 @@ import torch.nn as nn
 import torch.optim as optim
 import seaborn as sns
 
+import matplotlib as mpl
+
+# Use LaTeX-like font (Computer Modern)
+mpl.rcParams['text.usetex'] = False  # Don't use full LaTeX
+mpl.rcParams['mathtext.fontset'] = 'cm'  # Use Computer Modern for math
+mpl.rcParams['font.family'] = 'STIXGeneral'  # Close match to LaTeX text
+mpl.rcParams['font.size'] = 20
+mpl.rcParams['axes.titlesize'] = 20
+mpl.rcParams['axes.labelsize'] = 16
+mpl.rcParams['xtick.labelsize'] = 16
+mpl.rcParams['ytick.labelsize'] = 16
+mpl.rcParams['legend.fontsize'] = 14
+mpl.rcParams['figure.titlesize'] = 16
+mpl.rcParams['axes.labelweight'] = 'bold'
+mpl.rcParams['axes.titleweight'] = 'bold'
+
 def get_data(N=50, D_X=3, sigma_obs=0.05, N_test=500, gap=True):
     D_Y = 1  # Create 1D outputs
     np.random.seed(0)
@@ -121,7 +137,7 @@ def runMCDO(N, hidden_size=32, model_prob=0.1, model_lam=1e-2, lr=1e-2, num_epoc
     np.random.seed(0)
     torch.manual_seed(0)
     # Convert to PyTorch tensors
-    X, Y, X_test, Y_true = get_data(N=N, D_X=3, sigma_obs=0, gap=False)
+    X, Y, X_test, Y_true = get_data(N=N, D_X=3, sigma_obs=0.0, gap=False)
     # X_train = X[:,1].reshape(-1,1); y_train = Y[:,0].reshape(-1,1); X_test = X_test[:,1].reshape(-1,1)
     X_train_torch = torch.tensor(X.tolist(), dtype=torch.float32)
     Y_train_torch = torch.tensor(Y.tolist(), dtype=torch.float32)
@@ -391,22 +407,38 @@ if __name__ == "__main__":
     plt.plot(X[:,1], Y[:,0], '.', label="Training data")
     plt.plot(X_test[:,1], pred.squeeze(), label="Predictive mean")
     plt.legend()
+    plt.xlabel("X")
+    plt.ylabel("Y")
+    plt.ylim(-4, 4)
+
     plt.grid()
-    plt.show()
+    # plt.title("Perfect Model")
+    # plt.savefig("MCDO_True_Model.pdf")
+    # plt.show()
+
+
 
     error = (np.abs(Y_true[:,0] - np.array(pred.squeeze())))
     plt.figure(figsize=(10, 5))
-    plt.hist(np.sqrt(error), bins=50, alpha=0.5, label='Absolute error')
-    plt.title(f"Absolute mean error: {np.mean(error):.4f}")
+    plt.hist(np.sqrt(error), bins=50, label='Perfect model error', color='green')
+    # plt.title(f"Absolute mean error: {np.mean(error):.4f}")
     plt.legend()
     plt.grid()
+    plt.savefig("MCDO_True_Model_Error.pdf")
+    # plt.show()
+    # write the sqrt error to a file
+    np.savetxt("MCDO_True_Model_Error.txt", error, delimiter=",")
+
+    # read the error from the file
+    error = np.loadtxt("MCDO_True_Model_Error.txt", delimiter=",")
+
 
     parser = argparse.ArgumentParser(description="Bayesian neural network example")
-    parser.add_argument("-n", "--num-samples", nargs="?", default=10000, type=int)
-    parser.add_argument("--num-warmup", nargs="?", default=5000, type=int)
+    parser.add_argument("-n", "--num-samples", nargs="?", default=20000, type=int)
+    parser.add_argument("--num-warmup", nargs="?", default=15000, type=int)
     parser.add_argument("--num-chains", nargs="?", default=1, type=int)
     parser.add_argument("--num-data", nargs="?", default=50, type=int)
-    parser.add_argument("--num-hidden", nargs="?", default=138, type=int)
+    parser.add_argument("--num-hidden", nargs="?", default=5, type=int)
     parser.add_argument("--device", default="cpu", type=str, help='use "cpu" or "gpu".')
     parser.add_argument("--vmapped", action="store_true", default=True)
     parser.add_argument("--sigma-obs", nargs="?", default=0.05, type=float)

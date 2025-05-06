@@ -1,6 +1,25 @@
 from jax import config
 config.update("jax_enable_x64", True)
 
+
+import matplotlib as mpl
+
+# Use LaTeX-like font (Computer Modern)
+mpl.rcParams['text.usetex'] = False  # Don't use full LaTeX
+mpl.rcParams['mathtext.fontset'] = 'cm'  # Use Computer Modern for math
+mpl.rcParams['font.family'] = 'STIXGeneral'  # Close match to LaTeX text
+mpl.rcParams['font.size'] = 20
+mpl.rcParams['axes.titlesize'] = 20
+mpl.rcParams['axes.labelsize'] = 16
+mpl.rcParams['xtick.labelsize'] = 16
+mpl.rcParams['ytick.labelsize'] = 16
+mpl.rcParams['legend.fontsize'] = 14
+mpl.rcParams['figure.titlesize'] = 16
+mpl.rcParams['axes.labelweight'] = 'bold'
+mpl.rcParams['axes.titleweight'] = 'bold'
+
+
+
 import gpjax as gpx
 from jax import random as jr
 import jax.numpy as jnp
@@ -32,7 +51,7 @@ results = {
         50: None,
         1500: None
     },
-    "MCDO": {
+    "MCD": {
         15: None,
         50: None,
         1500: None
@@ -50,7 +69,7 @@ MSE = {
         50: None,
         1500: None
     },
-    "MCDO": {
+    "MCD": {
         15: None,
         50: None,
         1500: None
@@ -67,7 +86,7 @@ VCV  = {
         50: None,
         1500: None
     },
-    "MCDO": {
+    "MCD": {
         15: None,
         50: None,
         1500: None
@@ -135,7 +154,7 @@ def runGP(N):
     key = jr.PRNGKey(123)
     np.random.seed(8)
     D_X, D_H = 3, 5
-    X, Y, X_test, Y_true, _, _ = get_data(N=N, D_X=D_X)
+    X, Y, X_test, Y_true, _, _ = get_data(N=N, D_X=D_X, sigma_obs=0.2)
     # X_train = X[:,1].reshape(-1,1); y_train = Y[:,0].reshape(-1,1); X_test = X_test[:,1].reshape(-1,1)
 
     # dataset
@@ -279,7 +298,7 @@ def forward(X_test, samples, n):
 def runBNN(args):
 
     N, D_X, D_H = args.num_data, 3, args.num_hidden
-    X, Y, X_test, Y_true, _, _ = get_data(N=N, D_X=D_X)
+    X, Y, X_test, Y_true, _, _ = get_data(N=N, D_X=D_X, sigma_obs=0.2)
     
     # do inference
     rng_key, rng_key_predict = random.split(random.PRNGKey(0))
@@ -327,7 +346,7 @@ class MCVariationalDense(nn.Module):
         self.dropout_layers = dropout_layers
 
     def forward(self, X):
-        if not self.training and self.layer in self.dropout_layers:
+        if (self.training and self.layer in self.dropout_layers) or self.layer in self.dropout_layers:
             model_W = self.model_M * torch.bernoulli(torch.full_like(self.model_M, 1 - self.model_prob)) / (1 - self.model_prob)      
         else:
             model_W = self.model_M
@@ -375,10 +394,10 @@ def mc_inference(model, X, n_samples=100):
     return preds.mean(dim=0), preds.std(dim=0), preds
 
 def runMCDO(N, hidden_size=32, model_prob=0.1, model_lam=1e-3, lr=1e-3, num_epochs=1000, n_inference_samples=1000):
-    # np.random.seed(0)
-    # torch.manual_seed(0)
+    np.random.seed(21)
+    torch.manual_seed(21)
     # Convert to PyTorch tensors
-    X, Y, X_test, Y_true, _, _ = get_data(N=N, D_X=3)
+    X, Y, X_test, Y_true, _, _ = get_data(N=N, D_X=3, sigma_obs=0.2)
     # X_train = X[:,1].reshape(-1,1); y_train = Y[:,0].reshape(-1,1); X_test = X_test[:,1].reshape(-1,1)
     X_train_torch = torch.tensor(X.tolist(), dtype=torch.float32)
     Y_train_torch = torch.tensor(Y.tolist(), dtype=torch.float32)
@@ -393,7 +412,7 @@ def runMCDO(N, hidden_size=32, model_prob=0.1, model_lam=1e-3, lr=1e-3, num_epoc
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
     validation_error = []
-    patience = 7
+    patience = 10
     min_delta = 1e-6  # Minimum change in loss to qualify as improvement
     best_val_loss = float('inf')
     epochs_no_improve = 0
@@ -407,10 +426,10 @@ def runMCDO(N, hidden_size=32, model_prob=0.1, model_lam=1e-3, lr=1e-3, num_epoc
         loss.backward()
         optimizer.step()
         
-        if epoch % 100 == 0:
+        if epoch % 1000 == 0:
             model.eval()  # Set model to evaluation mode
             with torch.no_grad():  # Disable gradient computation
-                _, _, _, _, X_val, Y_val = get_data(N=150, D_X=3, N_test=500, gap=True, seed=epoch)
+                _, _, _, _, X_val, Y_val = get_data(N=150, D_X=3, N_test=500, sigma_obs=0.2, gap=True, seed=np.random.randint(0, 1000))
                 val_inference = []
                 for i in range(20):
                     val_inference.append(model(torch.tensor(np.array(X_val), dtype=torch.float32)))
@@ -453,7 +472,8 @@ chains = 1
 num_hidden = 4
 
 num_data_values = [15, 50, 150]  # Three different values for num_data
-
+model_lam = 1e-5
+model_prob = 0.15
 
 for num_data in num_data_values:
     args = argparse.Namespace(
@@ -462,7 +482,7 @@ for num_data in num_data_values:
         num_chains=chains,
         num_hidden=num_hidden,
         num_data=num_data,
-        vmapped=True
+        vmapped=False
     )
     
 
@@ -472,11 +492,11 @@ for num_data in num_data_values:
     mean_prediction, std_prediction, preds, X, Y, X_test, Y_true, mse = runBNN(args)
     results["BNN"][num_data] = (mean_prediction, std_prediction, preds, X, Y, X_test, Y_true, mse)
 
-    mean_pred, std_pred, preds, X, Y, X_test, Y_true, mse = runMCDO(num_data, hidden_size=32, model_prob=0.2, model_lam=1e-3, lr=0.001, num_epochs=10000, n_inference_samples=samples)
-    results["MCDO"][num_data] = (mean_pred, std_pred, preds, X, Y, X_test, Y_true, mse)
+    mean_pred, std_pred, preds, X, Y, X_test, Y_true, mse = runMCDO(num_data, hidden_size=32, model_prob=model_prob, model_lam=model_lam, lr=0.001, num_epochs=5000, n_inference_samples=samples)
+    results["MCD"][num_data] = (mean_pred, std_pred, preds, X, Y, X_test, Y_true, mse)
 
 # Sample data (Replace these with actual data from your results dictionary)
-models = ["GP", "BNN", "MCDO"]
+models = ["GP", "BNN", "MCD"]
 
 fig, axes = plt.subplots(3, 3, figsize=(15, 15))
 
@@ -491,7 +511,7 @@ for row, model in enumerate(models):
             mean_prediction, std_prediction, preds, X_train, y_train, X_test, Y_true, mse = results[model][num_data]
 
         # Plot individual predictions for BNN and MCDO
-        if model in ["BNN", "MCDO"]:
+        if model in ["BNN", "MCD"]:
             for pred in preds[-200:]:  # Plot fewer samples for clarity
                 ax.plot(X_test[:, 1], pred, color='gray', alpha=0.1)
             # if model == "BNN":
@@ -518,16 +538,16 @@ for row, model in enumerate(models):
         ax.set_xlabel("X")
         ax.set_ylabel("Y")
         if model == "GP":
-            ax.set_title(f"\n{model} Predictions (n={num_data})\nLengthscale: {opt_params[0]:.2f}, Variance: {opt_params[1]:.2f}\nMean Squared Error: {np.mean(mse):.2f}")
+            ax.set_title(f"\n{model} Predictions (n={num_data})") #  \nLengthscale: {opt_params[0]:.2f}, Variance: {opt_params[1]:.2f}\nMean Squared Error: {np.mean(mse):.2f}")
         else:
-            ax.set_title(f"\n{model} Predictions (n={num_data})\nMean Squared Error: {np.mean(mse):.2f}")
+            ax.set_title(f"\n{model} Predictions (n={num_data})") #\nMean Squared Error: {np.mean(mse):.2f}")
         ax.legend()
         ax.grid()
 
 plt.tight_layout()
-plt.savefig("plots/AllModelsComparison_uniformDO_smoothbnn.pdf")
+plt.savefig(f"plots/AllModelsComparison_uniformDO_smoothbnn_lam{model_lam}sigmaObs{0.2}_appendix.pdf")
 # plt.show()
-plt.close()
+# plt.close()
 
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 fig, axes = plt.subplots(3, 3, figsize=(15, 15))
@@ -547,13 +567,13 @@ for row, model in enumerate(models):
         ax.set_ylabel("Correlation")
         ax.grid()
         # Title
-        ax.set_title(f"{model} ACF (n={num_data})")
+        ax.set_title(f"{model} (n={num_data})")
 
 
 plt.tight_layout()
 plt.savefig("plots/AFC_smoothbnn.pdf")
-plt.close()
-# plt.show()
+# plt.close()
+plt.show()
 
 
 fig, axes = plt.subplots(3, 3, figsize=(15, 15))
@@ -566,7 +586,7 @@ for row, model in enumerate(models):
             _, _, cov_matrix, _, _, _, _, _, _ = results[model][num_data]
         else:
             _, _, preds, _, _, _, _, _ = results[model][num_data]
-            if model == "MCDO":
+            if model == "MCD":
                 cov_matrix = np.cov(preds[:,:,0], rowvar=False)
             else:
                 cov_matrix = np.cov(preds, rowvar=False)
@@ -595,7 +615,7 @@ for row, model in enumerate(models):
             _, _, cov_matrix, _, _, _, _, _, _ = results[model][num_data]
         else:
             _, _, preds, _, _, _, _, _ = results[model][num_data]
-            if model == "MCDO":
+            if model == "MCD":
                 cov_matrix = np.cov(preds[:,:,0], rowvar=False)
             else:
                 cov_matrix = np.cov(preds, rowvar=False)
