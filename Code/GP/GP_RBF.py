@@ -13,6 +13,23 @@ from jax import random as jr
 import jax.numpy as jnp
 import optax as ox
 
+import matplotlib as mpl
+
+# Use LaTeX-like font (Computer Modern)
+mpl.rcParams['text.usetex'] = False  # Don't use full LaTeX
+mpl.rcParams['mathtext.fontset'] = 'cm'  # Use Computer Modern for math
+mpl.rcParams['font.family'] = 'STIXGeneral'  # Close match to LaTeX text
+mpl.rcParams['font.size'] = 20
+mpl.rcParams['axes.titlesize'] = 20
+mpl.rcParams['axes.labelsize'] = 16
+mpl.rcParams['xtick.labelsize'] = 16
+mpl.rcParams['ytick.labelsize'] = 16
+mpl.rcParams['legend.fontsize'] = 14
+mpl.rcParams['figure.titlesize'] = 16
+mpl.rcParams['axes.labelweight'] = 'bold'
+mpl.rcParams['axes.titleweight'] = 'bold'
+
+
 def kernel(X1, X2, length_scale, sigma):
     """Exponentiated quadratic (RBF) kernel."""
 
@@ -202,7 +219,7 @@ if __name__ == "__main__":
     # y = np.sin(X).flatten() + (X.flatten()/9) + np.random.uniform(-1,1) # True function
 
     N, D_X, D_H = 50, 3, 5
-    X, Y, X_test, Y_true = get_data(N=N, D_X=D_X, N_test=n_samples, gap=False)
+    X, Y, X_test, Y_true = get_data(N=N, D_X=D_X, N_test=n_samples, gap=True)
     X_train = X[:,1]; y_train = Y[:,0]; X_test = X_test[:,1]
     
     # plt.figure()
@@ -332,7 +349,7 @@ if __name__ == "__main__":
     axes[0].plot(X_train, y_train, "r.", label="Train Data", alpha=0.5)
     # axes[0].plot(X, y, "m-", label="True function")
     axes[0].legend()
-    axes[0].set_title(f"\n\nMyGP (Self implemented) \nLengthscale: {optimized_params[0]:.2f}, Variance: {optimized_params[1]:.2f}\n")
+    axes[0].set_title(f"\n\nMyGP \nLengthscale: {optimized_params[0]:.2f}, Variance: {optimized_params[1]:.2f}\n")
     axes[0].set_xlabel("X")
     axes[0].set_ylabel("Y")
     axes[0].set_ylim(top=4, bottom=-4)
@@ -372,7 +389,7 @@ if __name__ == "__main__":
 
     plt.tight_layout()
     
-    plt.savefig("plots/posGP_rbf.pdf")
+    plt.savefig("plots/posGP_rbf_gap.pdf")
     plt.show()
     print("ok")
     plt.close()
