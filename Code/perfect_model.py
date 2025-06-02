@@ -415,13 +415,17 @@ if __name__ == "__main__":
     # plt.title("Perfect Model")
     # plt.savefig("MCDO_True_Model.pdf")
     # plt.show()
+    plt.close()
 
 
+    plt.figure(figsize=(8, 6))
 
     error = (np.abs(Y_true[:,0] - np.array(pred.squeeze())))
-    plt.figure(figsize=(10, 5))
+    # plt.figure(figsize=(10, 5))
     plt.hist(np.sqrt(error), bins=50, label='Perfect model error', color='green')
     # plt.title(f"Absolute mean error: {np.mean(error):.4f}")
+    plt.xlabel("Error")
+    # plt.ylabel("Frequency")
     plt.legend()
     plt.grid()
     plt.savefig("MCDO_True_Model_Error.pdf")

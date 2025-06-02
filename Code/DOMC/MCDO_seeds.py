@@ -108,6 +108,8 @@ def get_data(N=50, D_X=3, sigma_obs=0.05, N_test=500, N_val=20, gap=True, seed=0
     # Define ground truth function
     W = 0.5 * np.random.randn(D_X)
     Y_true = jnp.dot(X_test, W) + 0.5 * jnp.power(0.5 + X_test[:, 1], 2.0) * jnp.sin(4.0 * X_test[:, 1])
+    
+    # Y_true =  jnp.power(0.5 + X_test[:, 1], 2.0) * jnp.sin(4.0 * X_test[:, 1])
     Y_true = Y_true[:, np.newaxis]
     Y_true -= jnp.mean(Y_true)
     Y_true /= jnp.std(Y_true)
@@ -154,7 +156,7 @@ def get_data(N=50, D_X=3, sigma_obs=0.05, N_test=500, N_val=20, gap=True, seed=0
     return X, Y, X_test, Y_true, X_val, Y_val
 
 
-sigma = 0.2
+sigma = 0.05
 X, Y, X_test, Y_true, _, _ = get_data(N=50, D_X=3, N_test=500, sigma_obs=sigma, gap=True)
 
 # plot data
@@ -171,7 +173,7 @@ input_size = 3
 output_size = 1
 hidden_size = 32
 model_prob  = 0.15    # Dropout probability
-model_lam   = 0.1   # Regularization coefficient
+model_lam   = 1e-4   # Regularization coefficient
 lr          = 0.001  # Learning rate
 
 
@@ -210,7 +212,7 @@ mean_fcn = {
 predictions_all = []
 # seeds = [11, 22, 33, 44]
 # seeds = [21, 32, 43, 54]
-seeds = [12, 234, 21, 321]
+seeds = [5, 6, 7, 8]
 
 for idx, seed in enumerate(seeds):
 
@@ -220,7 +222,7 @@ for idx, seed in enumerate(seeds):
     torch.manual_seed(seed)
 
     # Initialize model, loss function, and optimizer
-    model = MCVariationalNN(input_size, hidden_size, output_size, model_prob, model_lam, [1,2,3])
+    model = MCVariationalNN(input_size, hidden_size, output_size, model_prob, model_lam, [2,3])
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
     validation_error = []
@@ -231,7 +233,7 @@ for idx, seed in enumerate(seeds):
     epochs_no_improve = 0
 
     # Training
-    epochs = 10000
+    epochs = 20000
     for epoch in range(epochs):
         model.train()
         optimizer.zero_grad()
@@ -283,7 +285,13 @@ for idx, seed in enumerate(seeds):
     # plt.grid()
     # plt.show()
 
+
     mean_pred, std_pred, predictions = mc_inference(model, X_test_torch, n_samples=20000)
+    print(f"Mean MSE error: {np.mean((np.array(mean_pred) - np.array(Y_true))**2)}\n seed: {seed}")
+    print(f"Mean STD error: {np.mean((np.array(std_pred) - np.ones_like(std_pred)*sigma)**2)} \n seed: {seed}")
+
+
+
     predictions_all.append(predictions)
 
     # Convert to numpy
@@ -313,8 +321,10 @@ for idx, seed in enumerate(seeds):
     print(i+1)
 plt.tight_layout()
 # plt.savefig(f"MCDO/Code/DOMC/plots/MCDO_pytorch_SEEDSdifferDO{model_prob}_Reg{model_lam}_NoDoTraining.pdf")
-plt.savefig(f"MCDO/Code/DOMC/plots/MCDO_pytorch_SEEDSdifferDO{model_prob}_Reg{model_lam}_sigma{sigma}_report_appendix.pdf")
-plt.show()
+plt.savefig(f"MCDO/Code/DOMC/plots/MCDO_pytorch_SEEDSdifferDO{model_prob}_Reg{model_lam}_sigma{sigma}_report_paper.pdf")
+# plt.show()
+
+
 
 # plot all predictions mean, std, and samples from predictions_all
 predictions_all = np.array(predictions_all)
@@ -342,7 +352,8 @@ plt.ylabel("Y")
 # plt.title("MC Dropout Ensemble seeds")
 # plt.savefig(f"MCDO/Code/DOMC/plots/mergedModels{model_prob}_Reg{model_lam}_NoDoTraining.pdf")
 # plt.savefig(f"MCDO/Code/DOMC/plots/mergedModels{model_prob}_Reg{model_lam}4x4.pdf")
-plt.savefig(f"MCDO/Code/DOMC/plots/Ensemble_mergedModels{model_prob}_Reg{model_lam}_sigma{sigma}_report_decDO.pdf")
+# plt.savefig(f"MCDO/Code/DOMC/plots/Ensemble_mergedModels{model_prob}_Reg{model_lam}_sigma{sigma}_report_seedis2.pdf")
+plt.savefig(f"MCDO/Code/DOMC/plots/Ensemble_mergedModels{model_prob}_Reg{model_lam}_sigma{sigma}ENSAMBLE.pdf")
 plt.show()
 
 

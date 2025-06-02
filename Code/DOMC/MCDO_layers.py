@@ -173,7 +173,7 @@ input_size = 3
 output_size = 1
 hidden_size = 32
 model_prob  = 0.15   # Dropout probability
-model_lam   = 0.001  # Regularization coefficient
+model_lam   = 1e-5  # Regularization coefficient
 lr          = 0.001 # Learning rate
 seed        = 45
 np.random.seed(seed)
@@ -307,7 +307,7 @@ for idx, (name, layers) in enumerate(dropout_layers.items()):
     plt.ylim(-4, 4)
     plt.title(f"\n{name}")
 plt.tight_layout()
-plt.savefig(f"MCDO/Code/DOMC/plots/MCDO_pytorch_layersdifferDO{model_prob}_Reg{model_lam}.pdf")
+plt.savefig(f"MCDO/Code/DOMC/plots/MCDO_pytorch_layersdifferDO{model_prob}_Reg{model_lam}seed2.pdf")
 plt.show()
 
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacfgg

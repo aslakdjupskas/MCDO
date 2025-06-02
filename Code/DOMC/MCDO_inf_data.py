@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 import optuna
 import pandas as pd
-
+import os
 
 import matplotlib as mpl
 
@@ -71,9 +71,9 @@ class MCVariationalNN(nn.Module):
         
 
     def forward(self, X):
-        X = torch.tanh(self.layer1(X))
-        X = torch.tanh(self.layer2(X))
-        X = torch.tanh(self.layer3(X))  # New layer added
+        X = torch.relu(self.layer1(X))
+        X = torch.relu(self.layer2(X))
+        X = torch.relu(self.layer3(X))  # New layer added
         # X = torch.tanh(self.layer4(X))
         X = self.layer4(X)  # Output layer
         return X
@@ -118,7 +118,7 @@ def get_data(N=50, D_X=3, sigma_obs=0.05, N_test=500, N_val=20, gap=True, seed=0
     
     # Define ground truth function
     W = 0.5 * np.random.randn(D_X)
-    Y_true = jnp.dot(X_test, W) + 0.5 * jnp.power(0.5 + X_test[:, 1], 2.0) * jnp.sin(4.0 * X_test[:, 1])
+    Y_true = jnp.dot(X_test, W) + 0.5 * jnp.power(0.5 + X_test[:, 1], 2.0) * jnp.sin(4.0 * X_test[:, 1])    
     Y_true = Y_true[:, np.newaxis]
     Y_true -= jnp.mean(Y_true)
     Y_true /= jnp.std(Y_true)
@@ -134,7 +134,7 @@ def get_data(N=50, D_X=3, sigma_obs=0.05, N_test=500, N_val=20, gap=True, seed=0
         Y_available = Y_true
     
     # Ensure X and Y are within the range [-1,1] **before selecting indices**
-    valid_mask = (X_available[:, 1] >= -1.0) & (X_available[:, 1] <= 1.0)
+    valid_mask = (X_available[:, 1] >= -1.3) & (X_available[:, 1] <= 1.3)
     X_available = X_available[valid_mask]
     Y_available = Y_available[valid_mask]
 
@@ -150,7 +150,7 @@ def get_data(N=50, D_X=3, sigma_obs=0.05, N_test=500, N_val=20, gap=True, seed=0
 
     if sinc_noise_bool:
         sinc_noise = np.sinc(X[:,1])
-        Y = Y_available[indices] + sinc_noise[:, None] * np.random.randn(N, D_Y)
+        Y = Y_available[indices] + sigma_obs * sinc_noise[:, None] * np.random.randn(N, D_Y)
     else:
         Y = Y_available[indices] + sigma_obs * np.random.randn(N, D_Y)
 
@@ -179,7 +179,7 @@ def get_data(N=50, D_X=3, sigma_obs=0.05, N_test=500, N_val=20, gap=True, seed=0
 
 def objective(trial):
     # Sample a dropout rate
-    model_prob = trial.suggest_float("dropout_rate", 0.0, 0.5)
+    model_prob = trial.suggest_float("dropout_rate", 0.1, 0.8)
     # hidden_size = trial.suggest_int("hidden_size", 16, 1024, step=16)
     # model_lam = trial.suggest_float("model_lam", 1e-5, 5e-3, log=True)
     # lr = trial.suggest_float("lr", 1e-5, 1e-2, log=True)
@@ -190,7 +190,7 @@ def objective(trial):
         hidden_size=32,
         output_size=1,
         model_prob=model_prob,
-        model_lam=1e-3,
+        model_lam=1e-4,
         dropout_layers=[2, 3]
     )
 
@@ -199,7 +199,7 @@ def objective(trial):
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
 
     # Get fixed training data
-    X, Y, _, _, _, _ = get_data(N=100, D_X=3, N_test=500, sigma_obs=sigma, gap=False, sinc_noise_bool=sinc_noise_bool, seed=42)
+    X, Y, _, _, _, _ = get_data(N=100, D_X=3, N_test=500, sigma_obs=sigma, gap=False, sinc_noise_bool=sinc_noise_bool, seed=np.random.randint(0, 1000))
     # X_train_torch = torch.tensor(np.array(X), dtype=torch.float32)
     # Y_train_torch = torch.tensor(np.array(Y), dtype=torch.float32)
 
@@ -211,7 +211,7 @@ def objective(trial):
     ys = np.zeros((10000,100))
     xs = np.zeros((10000,100))
     for i in range(ys.shape[0]):
-        X, Y, _, _, _, _ = get_data(N=100, D_X=3, N_test=500, sigma_obs=sigma, gap=False, sinc_noise_bool=sinc_noise_bool, seed=i)
+        X, Y, _, _, _, _ = get_data(N=100, D_X=3, N_test=200, sigma_obs=sigma, gap=False, sinc_noise_bool=sinc_noise_bool, seed=i)
         ys[i,:] = np.array(Y[:,0])
         xs[i,:] = np.array(X[:,1])
     Y_std  = ys.std(axis=0)
@@ -220,43 +220,66 @@ def objective(trial):
     Y_std = torch.tensor(np.array(Y_std), dtype=torch.float32)
     Y_mean = torch.tensor(np.array(Y_mean), dtype=torch.float32)
     
-    
+    # Track losses
+    mean_losses = []
+    std_losses = []
+    total_losses = []
 
-    for epoch in range(2000):
+    for epoch in range(1000):
         model.train()
         optimizer.zero_grad()
-        X, Y, _, _, _, _ = get_data(N=100, D_X=3, N_test=500, sigma_obs=sigma, gap=False, sinc_noise_bool=sinc_noise_bool, seed=epoch)
-        # Perform MC Inference after training step
-        model.eval()
-        y_pred_mean, y_pred_std, _ = mc_inference_train(model, N=100, n_samples=500)
+        X, Y, _, _, _, _ = get_data(N=100, D_X=3, N_test=200, sigma_obs=sigma, gap=False, sinc_noise_bool=sinc_noise_bool, seed=epoch)
+        for i in range(1):
+            # Perform MC Inference after training step
+            model.eval()
+            y_pred_mean, y_pred_std, _ = mc_inference_train(model, N=100, n_samples=500)
 
-        # Compute additional losses
-        mean_loss = criterion(y_pred_mean[:, 0], Y_mean) + model.regularization()
-        std_loss = criterion(y_pred_std[:, 0], Y_std)
+            # Compute additional losses
+            mean_loss = criterion(y_pred_mean[:, 0], Y_mean) + model.regularization()
+            std_loss = criterion(y_pred_std[:, 0], Y_std)
 
-        # Combine all losses
-        total_loss = mean_loss + std_loss  
+            # Combine all losses
+            total_loss = mean_loss + std_loss  
 
-        # Backpropagation
-        total_loss.backward()
-        optimizer.step()
+            mean_losses.append(mean_loss.item())
+            std_losses.append(std_loss.item())
+            total_losses.append(total_loss.item())
 
-        # Report to Optuna
-        trial.report(total_loss.item(), epoch)
+            # Backpropagation
+            total_loss.backward()
+            optimizer.step()
 
-        # Check for early stopping
-        if trial.should_prune():
-            raise optuna.TrialPruned()
+            # Report to Optuna
+            trial.report(total_loss.item(), epoch)
+
+            # Check for early stopping
+            if trial.should_prune():
+                raise optuna.TrialPruned()
+
+    # Store tracked losses for post-analysis
+    trial.set_user_attr("mean_losses", mean_losses)
+    trial.set_user_attr("std_losses", std_losses)
+    trial.set_user_attr("total_losses", total_losses)
+
+    # model_dir = "saved_models"
+    # os.makedirs(model_dir, exist_ok=True)
+    # model_path = os.path.join(model_dir, f"model_trial_{trial.number}.pt")
+    # torch.save(model.state_dict(), model_path)
+
+    # Link model path to trial
+    # trial.set_user_attr("model_path", model_path)
+
 
 
     return total_loss.item()
 
 
+# X, Y, X_test, Y_true, X_val, Y_val = get_data(N=150, D_X=3, N_test=500, sigma_obs=0.35, gap=False, sinc_noise_bool=True)
 
 
-# plot data
+# # plot data
 # plt.figure()
-# plt.plot(X[:, 1], Y, "r.", label="Train Data", alpha=0.5
+# plt.plot(X[:, 1], Y, "r.", label="Train Data", alpha=0.5)
 # plt.plot(X_val[:,1], Y_val, "bo", lw=2.0, label="True mean")
 # plt.plot(X_test[:,1], Y_true, "k--", lw=2.0, label="True mean")
 # plt.grid()
@@ -266,12 +289,12 @@ def objective(trial):
 ## PARAMETERS
 input_size = 3
 output_size = 1
-hidden_size = 1024
+hidden_size = 32
 model_prob  = 0.2    # Dropout probability
-model_lam   = 1e-3   # Regularization coefficient
+model_lam   = 1e-4   # Regularization coefficient
 lr          = 0.001  # Learning rate
 seed = 416       # Random seed
-sigma = 0.35
+sigma = 1.35
 sinc_noise_bool = True
 _, _, X_test, Y_true, _, _ = get_data(N=150, D_X=3, N_test=500, sigma_obs=sigma, gap=False, sinc_noise_bool=sinc_noise_bool)
 
@@ -304,24 +327,38 @@ _, _, X_test, Y_true, _, _ = get_data(N=150, D_X=3, N_test=500, sigma_obs=sigma,
 # # plt.show()
 
 # # Run the optimization
-# study = optuna.create_study(direction="minimize")
-# study.optimize(objective, n_trials=20)
+study = optuna.create_study(direction="minimize")
+study.optimize(objective, n_trials=1)
 
-# Save the study
-# study.trials_dataframe().to_csv("optuna_trials_c.csv")
+study.trials_dataframe().to_csv("optuna_trials_relu_trackloss.csv")
+
+
+best_trial = study.best_trial
+dropout_rate = best_trial.params["dropout_rate"]
+mean_losses = best_trial.user_attrs["mean_losses"]
+std_losses = best_trial.user_attrs["std_losses"]
+total_losses = best_trial.user_attrs["total_losses"]
+
+import matplotlib.pyplot as plt
+
+plt.plot(mean_losses, label="Mean Loss")
+plt.plot(std_losses, label="Std Loss")
+plt.plot(total_losses, label="Total Loss")
+plt.xlabel("Epoch")
+plt.ylabel("Loss")
+plt.legend()
+plt.grid()
+plt.title("Loss components over training epochs")
+plt.savefig("MCDO/Code/DOMC/plots/loss_components.pdf")
+# plt.show()
+
+
+# # Save the study
+# study.trials_dataframe().to_csv("optuna_trials_relu.csv")
 # Load the study
-optuna_df = pd.read_csv("optuna_trials_c.csv")
+optuna_df = pd.read_csv("optuna_trials.csv")
 # optimal = optuna_df.loc[14,["value", 'params_dropout_rate', 'params_model_lam']]
 # study = optuna.load_study(study_name="optuna_trials.csv", storage="sqlite:///example.db")
-
-## PARAMETERS
-input_size = 3
-output_size = 1
-hidden_size = 32
-# model_prob  = optimal['params_dropout_rate']    # Dropout probability
-model_lam   = 1e-3   # Regularization coefficient
-lr          = 1e-3            # Learning rate
-
 
 # Convert to PyTorch tensors
 X_test_torch = torch.tensor(np.array(X_test), dtype=torch.float32)
@@ -356,12 +393,12 @@ seeds = [12, 123, 23, 234, 21, 321, 32, 11, 22, 33, 44, 55, 12772, 5543, 12356, 
 dropout_rates_dict = {
     0.1:None,
     }
-trials = [13, 14, 15, 16]
+trials = [0]
 
 ys = np.zeros((200,100))
 xs = np.zeros((200,100))
 for i in range(ys.shape[0]):
-    X, Y, _, _, _, _ = get_data(N=100, D_X=3, N_test=500, sigma_obs=sigma, gap=False, sinc_noise_bool=False, seed=i)
+    X, Y, _, _, _, _ = get_data(N=100, D_X=3, N_test=500, sigma_obs=sigma, gap=False, sinc_noise_bool=sinc_noise_bool, seed=i)
     ys[i,:] = np.array(Y[:,0])
     xs[i,:] = np.array(X[:,1])
 Y_std  = ys.std(axis=0)
@@ -370,26 +407,105 @@ Y_mean = ys.mean(axis=0)
 Y_std = torch.tensor(np.array(Y_std), dtype=torch.float32)
 Y_mean = torch.tensor(np.array(Y_mean), dtype=torch.float32)
 
-# plot ys and xs as datapoints
-plt.figure()
-for i in range(200):
-    plt.plot(xs[i,:], ys[i,:], 'r.')
-plt.grid()
-# plt.title("Data points")
+
+
+best_trial = study.best_trial
+model_path = best_trial.user_attrs["model_path"]
+
+# Recreate the model architecture
+best_model = MCVariationalNN(
+    input_size=3,
+    hidden_size=32,
+    output_size=1,
+    model_prob=best_trial.params["dropout_rate"],  # Use best dropout rate
+    model_lam=1e-4,
+    dropout_layers=[2, 3]
+)
+
+# Load saved weights
+best_model.load_state_dict(torch.load(model_path))
+best_model.eval()
+mean_pred, std_pred, predictions = mc_inference(best_model, X_test_torch, n_samples=5000)
+
+# Convert to numpy
+mean_pred = mean_pred.numpy()
+std_pred = std_pred.numpy()
+
+# plot in subplot   
+# plt.subplot(2, 2, idx+1)
+# plt.plot(X[:, 1], Y, "r.", label="Train Data", alpha=0.5)# Compute fixed shot noise standard deviation
+std_shot_noise_fixed = (sigma * np.random.randn(10000, 1)).std()
+
+
+if sinc_noise_bool:
+    # Compute sinc function values (avoid division by zero at x=0)
+    sinc_values = np.sinc(X_test[:, 1])  # sinc(x) = sin(pi*x) / (pi*x)
+
+    # Scale sinc values to match noise scale
+    std_shot_noise = std_shot_noise_fixed * sinc_values
+else:
+    std_shot_noise = std_shot_noise_fixed * np.ones_like(X_test[:, 1])
+
+# mask for zero out std_shot_noise when x>1 or x<-1
+mask = (X_test[:, 1] < -1) | (X_test[:, 1] > 1)
+std_shot_noise[mask] = 0
+plt.fill_between(
+    X_test[:, 1],
+    (Y_true[:,0] - 2 * std_shot_noise).flatten(),
+    (Y_true[:,0] + 2 * std_shot_noise).flatten(),
+    color="orange",
+    label="95% CI training data",
+    alpha=0.5
+
+)
+
+plt.plot(X_test[:,1], mean_pred, label="MC Mean Prediction", color="blue")
+for i in range(250):
+    plt.plot(X_test[:,1], predictions[1000+i], color="gray", alpha=0.05)
+plt.fill_between(
+    X_test[:,1],
+    (mean_pred - 2 * std_pred).flatten(),
+    (mean_pred + 2 * std_pred).flatten(),
+    color="lightblue",
+    label="95% CI prediction",
+    alpha=0.5
+)
+plt.plot(X_test[:,1], Y_true, "k--", lw=2.0, label="True mean")
+plt.grid(True)
+plt.legend()
 plt.xlabel("X")
 plt.ylabel("Y")
-plt.savefig("data_points_constant.pdf")
-plt.show()
+plt.ylim(-4, 4)
+# plt.title(f"Dropout rate: {model_prob:.2f}| Lambda: {model_lam:.5f}")
+plt.tight_layout()
+# plt.savefig(f"MCDO/Code/DOMC/plots/MCDO_pytorch_sinc_unlimdata_RegPoster.pdf")
+# plt.savefig(f"MCDO/Code/DOMC/plots/MCDO_pytorch_sinc_unlimdata_Reg{model_prob}.pdf")
 
+# plt.show()
+
+
+# plot ys and xs as datapoints
+# plt.figure()
+# for i in range(200):
+#     plt.plot(xs[i,:], ys[i,:], 'r.')
+# plt.grid()
+# # plt.title("Data points")
+# plt.xlabel("X")
+# plt.ylabel("Y")
+# plt.savefig("data_points_constant.pdf")
+# plt.show()
+plt.figure(figsize=(8,5))
+plt.grid(True)
 for idx, trial in enumerate(trials):
     
     # random seed
     np.random.seed(seed)
     torch.manual_seed(seed)
-    optuna_df = pd.read_csv("optuna_trials.csv")
-    optimal = optuna_df.loc[trial,["value", 'params_dropout_rate', 'params_model_lam']]
-    model_prob  = optimal['params_dropout_rate']    # Dropout probability
-    model_lam   = optimal['params_model_lam'] 
+    # optuna_df = pd.read_csv("optuna_trials.csv")
+    # optimal = optuna_df.loc[trial,["value", 'params_dropout_rate', 'params_model_lam']]
+    # model_prob  = optimal['params_dropout_rate']    # Dropout probability
+    # model_lam   = optimal['params_model_lam'] 
+    model_prob  = dropout_rate    # Dropout probability
 
     # Initialize model, loss function, and optimizer
     model = MCVariationalNN(input_size, hidden_size, output_size, model_prob, model_lam, [2,3])
@@ -403,6 +519,7 @@ for idx, trial in enumerate(trials):
     epochs_no_improve = 0
 
     # Training
+    variance_loss = []
     epochs = 10000
     for epoch in range(epochs):
         model.train()
@@ -416,6 +533,9 @@ for idx, trial in enumerate(trials):
 
         outputs = model(X_train_torch)
         loss = criterion(outputs, Y_train_torch) + model.regularization()
+        y_pred_mean, y_pred_std, _ = mc_inference_train(model, N=100, n_samples=500)
+        std_loss = criterion(y_pred_std[:, 0], Y_std)
+
         loss.backward()
         optimizer.step()
         
@@ -427,6 +547,7 @@ for idx, trial in enumerate(trials):
                 val_loss = criterion(val_outputs, torch.tensor(np.array(Y_val), dtype=torch.float32))
                 validation_error.append(val_loss.item())
                 loss_history.append(loss.item())
+
 
             print(f"Epoch {epoch}, Loss: {loss.item():.4f}, Val Loss: {val_loss.item():.4f}")
 
@@ -472,7 +593,7 @@ for idx, trial in enumerate(trials):
     std_pred = std_pred.numpy()
 
     # plot in subplot   
-    plt.subplot(2, 2, idx+1)
+    # plt.subplot(2, 2, idx+1)
     # plt.plot(X[:, 1], Y, "r.", label="Train Data", alpha=0.5)# Compute fixed shot noise standard deviation
     std_shot_noise_fixed = (sigma * np.random.randn(10000, 1)).std()
 
@@ -511,17 +632,17 @@ for idx, trial in enumerate(trials):
         alpha=0.5
     )
     plt.plot(X_test[:,1], Y_true, "k--", lw=2.0, label="True mean")
-    plt.grid()
+    plt.grid(True)
     plt.legend()
     plt.xlabel("X")
     plt.ylabel("Y")
     plt.ylim(-4, 4)
-    plt.title(f"Dropout rate: {model_prob:.2f}| Lambda: {model_lam:.5f}")
+    # plt.title(f"Dropout rate: {model_prob:.2f}| Lambda: {model_lam:.5f}")
 plt.tight_layout()
-plt.savefig(f"MCDO/Code/DOMC/plots/MCDO_pytorch_constant_unlimdata_Reg{model_prob}.pdf")
+plt.savefig(f"MCDO/Code/DOMC/plots/MCDO_pytorch_sinc_unlimdata_RegPoster.pdf")
 # plt.savefig(f"MCDO/Code/DOMC/plots/MCDO_pytorch_sinc_unlimdata_Reg{model_prob}.pdf")
 
-# plt.show()
+plt.show()
 
 # Extract keys (dropout rates) and values (uncertainty measures)
 dropout_rates = list(dropout_rates_dict.keys())
@@ -538,7 +659,7 @@ plt.title("Uncertainty vs. Dropout Rate")
 plt.xticks(dropout_rates)  # Ensure correct ticks on x-axis
 plt.grid(axis='y', linestyle='--', alpha=0.7)
 # plt.savefig(f"MCDO/Code/DOMC/plots/MCDO_pytorch_unlimdata_DOvsuncertainty.pdf")
-plt.savefig(f"MCDO/Code/DOMC/plots/MCDO_pytorch_sinc_unlimdata_DOvsuncertainty_1024_...._5L.pdf")
+plt.savefig(f"MCDO/Code/DOMC/plots/MCDO_pytorch_sinc_seed2.pdf")
 plt.show()
 
 print("Done")
