@@ -105,8 +105,8 @@ def get_data(N=50, D_X=3, sigma_obs=0.2, N_test=500, N_val=20, gap=True, seed=0)
     
     # Define ground truth function
     W = 0.5 * np.random.randn(D_X)
-    Y_true = jnp.dot(X_test, W) + 0.5 * jnp.power(0.5 + X_test[:, 1], 2.0) * jnp.sin(4.0 * X_test[:, 1])
-    # Y_true =  jnp.power(0.5 + X_test[:, 1], 2.0) * jnp.sin(4.0 * X_test[:, 1])
+    # Y_true = jnp.dot(X_test, W) + 0.5 * jnp.power(0.5 + X_test[:, 1], 2.0) * jnp.sin(4.0 * X_test[:, 1])
+    Y_true =  jnp.power(0.5 + X_test[:, 1], 2.0) * jnp.sin(4.0 * X_test[:, 1])
     
     Y_true = Y_true[:, np.newaxis]
     Y_true -= jnp.mean(Y_true)
@@ -156,7 +156,7 @@ def runGP(N):
     key = jr.PRNGKey(123)
     np.random.seed(8)
     D_X, D_H = 3, 5
-    X, Y, X_test, Y_true, _, _ = get_data(N=N, D_X=D_X, sigma_obs=0.05)
+    X, Y, X_test, Y_true, _, _ = get_data(N=N, D_X=D_X, sigma_obs=0.2)
     # X_train = X[:,1].reshape(-1,1); y_train = Y[:,0].reshape(-1,1); X_test = X_test[:,1].reshape(-1,1)
 
     # dataset
@@ -300,7 +300,7 @@ def forward(X_test, samples, n):
 def runBNN(args):
 
     N, D_X, D_H = args.num_data, 3, args.num_hidden
-    X, Y, X_test, Y_true, _, _ = get_data(N=N, D_X=D_X, sigma_obs=0.05)
+    X, Y, X_test, Y_true, _, _ = get_data(N=N, D_X=D_X, sigma_obs=0.05, gap=True)
     
     # do inference
     rng_key, rng_key_predict = random.split(random.PRNGKey(0))
@@ -369,9 +369,9 @@ class MCVariationalNN(nn.Module):
         self.layer4 = MCVariationalDense(hidden_size, output_size, model_prob, model_lam, layer=4, dropout_layers=dropout_layers)
 
     def forward(self, X):
-        X = torch.relu(self.layer1(X))
-        X = torch.relu(self.layer2(X))
-        X = torch.relu(self.layer3(X))
+        X = torch.tanh(self.layer1(X))
+        X = torch.tanh(self.layer2(X))
+        X = torch.tanh(self.layer3(X))
         X = self.layer4(X)
         return X
 
@@ -395,13 +395,11 @@ def mc_inference(model, X, n_samples=100):
             preds[i] = model(X)
     return preds.mean(dim=0), preds.std(dim=0), preds
 
-def runMCDO(N, hidden_size=32, model_prob=0.1, model_lam=1e-3, lr=1e-3, num_epochs=2000, n_inference_samples=1000):
-    np.random.seed(0)
-    torch.manual_seed(0)
+def runMCDO(N, hidden_size=32, model_prob=0.1, model_lam=1e-3, lr=1e-3, num_epochs=1000, n_inference_samples=1000):
+    np.random.seed(21)
+    torch.manual_seed(21)
     # Convert to PyTorch tensors
     X, Y, X_test, Y_true, _, _ = get_data(N=N, D_X=3, sigma_obs=0.05, seed=0)
-    # np.random.seed(12)
-
     # X_train = X[:,1].reshape(-1,1); y_train = Y[:,0].reshape(-1,1); X_test = X_test[:,1].reshape(-1,1)
     X_train_torch = torch.tensor(X.tolist(), dtype=torch.float32)
     Y_train_torch = torch.tensor(Y.tolist(), dtype=torch.float32)
@@ -473,9 +471,9 @@ def runMCDO(N, hidden_size=32, model_prob=0.1, model_lam=1e-3, lr=1e-3, num_epoc
 samples = 12000
 warmup = 2000
 chains = 1
-num_hidden = 4
+num_hidden = 10
 
-num_data_values = [15, 50, 150]  # Three different values for num_data
+num_data_values = [15, 150]  # Three different values for num_data
 model_lam = 1e-4
 model_prob = 0.15
 
@@ -490,19 +488,19 @@ for num_data in num_data_values:
     )
     
 
-    pred_mean, pred_std, cov_matrix, X, Y, X_test, Y_true, opt_params, mse = runGP(num_data)
-    results["GP"][num_data] = (pred_mean, pred_std, cov_matrix, X, Y, X_test, Y_true, opt_params, mse)
+    # pred_mean, pred_std, cov_matrix, X, Y, X_test, Y_true, opt_params, mse = runGP(num_data)
+    # results["GP"][num_data] = (pred_mean, pred_std, cov_matrix, X, Y, X_test, Y_true, opt_params, mse)
 
     mean_prediction, std_prediction, preds, X, Y, X_test, Y_true, mse = runBNN(args)
     results["BNN"][num_data] = (mean_prediction, std_prediction, preds, X, Y, X_test, Y_true, mse)
 
-    mean_pred, std_pred, preds, X, Y, X_test, Y_true, mse = runMCDO(num_data, hidden_size=32, model_prob=model_prob, model_lam=model_lam, lr=0.001, num_epochs=6000, n_inference_samples=samples)
+    mean_pred, std_pred, preds, X, Y, X_test, Y_true, mse = runMCDO(num_data, hidden_size=32, model_prob=model_prob, model_lam=model_lam, lr=0.001, num_epochs=10000, n_inference_samples=samples)
     results["MCD"][num_data] = (mean_pred, std_pred, preds, X, Y, X_test, Y_true, mse)
 
 # Sample data (Replace these with actual data from your results dictionary)
 models = ["GP", "BNN", "MCD"]
-
-fig, axes = plt.subplots(3, 3, figsize=(15, 15))
+models = ["BNN", "MCD"]
+fig, axes = plt.subplots(2, 2, figsize=(15, 15))
 
 for row, model in enumerate(models):
     for col, num_data in enumerate(num_data_values): 
@@ -540,16 +538,17 @@ for row, model in enumerate(models):
         ax.plot(X_train[:, 1], y_train[:, 0], "r.", alpha=0.5, label="Training Data")
         ax.set_ylim(-4,4) 
         ax.set_xlabel("X")
-        # ax.set_ylabel("Y")
+        ax.set_ylabel("Y")
         if model == "GP":
             ax.set_title(f"\n{model} Predictions (n={num_data})") #  \nLengthscale: {opt_params[0]:.2f}, Variance: {opt_params[1]:.2f}\nMean Squared Error: {np.mean(mse):.2f}")
         else:
             ax.set_title(f"\n{model} Predictions (n={num_data})") #\nMean Squared Error: {np.mean(mse):.2f}")
         ax.legend()
         ax.grid()
-plt.tight_layout(pad=0, w_pad=0, h_pad=0)
-plt.savefig(f"plots/AllModelsComparison_uniformDO_smoothbnn_lam{model_lam}sigmaObs{0.05}_paper.pdf")
-# plt.show()
+
+plt.tight_layout()
+plt.savefig(f"plots/BNNMCDModelsComparison_uniformDO_smoothbnn_lam{model_lam}sigmaObs{0.05}_nogap.pdf")
+plt.show()
 # plt.close()
 
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf

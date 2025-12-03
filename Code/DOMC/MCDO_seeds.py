@@ -183,12 +183,12 @@ X_train_torch = torch.tensor(np.array(X), dtype=torch.float32)
 Y_train_torch = torch.tensor(np.array(Y), dtype=torch.float32)
 X_test_torch = torch.tensor(np.array(X_test), dtype=torch.float32)
 
-# Subplot 4x4
-plt.figure(figsize=(15, 15))
-# plt.title(f"MC Dropout with different seeds\nDropout probability: {model_prob}\n\n")
-plt.xticks([])
-plt.yticks([])
-plt.box(False)
+# # Subplot 4x4
+# plt.figure(figsize=(15, 15))
+# # plt.title(f"MC Dropout with different seeds\nDropout probability: {model_prob}\n\n")
+# plt.xticks([])
+# plt.yticks([])
+# plt.box(False)
 
 
 mean_fcn = {
@@ -210,9 +210,12 @@ mean_fcn = {
 # 9 seeds
 # seeds = [32, 21, 123456, 66642, 294, 5932, 24456, 68998, 3422] #, 24, 52, 62, 27, 82]
 predictions_all = []
+MSEs = []
+MSEs_std = []
 # seeds = [11, 22, 33, 44]
 # seeds = [21, 32, 43, 54]
 seeds = [5, 6, 7, 8]
+seeds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99]
 
 for idx, seed in enumerate(seeds):
 
@@ -287,8 +290,8 @@ for idx, seed in enumerate(seeds):
 
 
     mean_pred, std_pred, predictions = mc_inference(model, X_test_torch, n_samples=20000)
-    print(f"Mean MSE error: {np.mean((np.array(mean_pred) - np.array(Y_true))**2)}\n seed: {seed}")
-    print(f"Mean STD error: {np.mean((np.array(std_pred) - np.ones_like(std_pred)*sigma)**2)} \n seed: {seed}")
+    # print(f"Mean MSE error: {np.mean((np.array(mean_pred) - np.array(Y_true))**2)}\n seed: {seed}")
+    # print(f"Mean STD error: {np.mean((np.array(std_pred) - np.ones_like(std_pred)*sigma)**2)} \n seed: {seed}")
 
 
 
@@ -298,30 +301,34 @@ for idx, seed in enumerate(seeds):
     mean_pred = mean_pred.numpy()
     std_pred = std_pred.numpy()
 
+    MSEs.append(np.mean((mean_pred - Y_true)**2))
+    # sigma_obs is the noise added to the data
+    MSEs_std.append(np.mean((std_pred - np.ones_like(std_pred)*sigma)**2))
+
     # plot in subplot   
-    plt.subplot(2, 2, idx+1)
-    plt.plot(X[:, 1], Y, "r.", label="Train Data", alpha=0.5)
-    plt.plot(X_test[:,1], mean_pred, label="MC Mean Prediction", color="blue")
-    for i in range(250):
-        plt.plot(X_test[:,1], predictions[5000+i], color="gray", alpha=0.05)
-    plt.fill_between(
-        X_test[:,1],
-        (mean_pred - 2 * std_pred).flatten(),
-        (mean_pred + 2 * std_pred).flatten(),
-        color="lightblue",
-        label="95% CI",
-    )
-    plt.plot(X_test[:,1], Y_true, "k--", lw=2.0, label="True mean")
-    plt.grid()
-    plt.legend()
-    plt.xlabel("X")
-    plt.ylabel("Y")
-    plt.ylim(-4, 4)
-    # plt.title(f"Seed {seed}\n")
-    print(i+1)
-plt.tight_layout()
+    # plt.subplot(2, 2, idx+1)
+    # plt.plot(X[:, 1], Y, "r.", label="Train Data", alpha=0.5)
+    # plt.plot(X_test[:,1], mean_pred, label="MC Mean Prediction", color="blue")
+    # for i in range(250):
+    #     plt.plot(X_test[:,1], predictions[5000+i], color="gray", alpha=0.05)
+    # plt.fill_between(
+    #     X_test[:,1],
+    #     (mean_pred - 2 * std_pred).flatten(),
+    #     (mean_pred + 2 * std_pred).flatten(),
+    #     color="lightblue",
+    #     label="95% CI",
+    # )
+    # plt.plot(X_test[:,1], Y_true, "k--", lw=2.0, label="True mean")
+    # plt.grid()
+    # plt.legend()
+    # plt.xlabel("X")
+    # plt.ylabel("Y")
+    # plt.ylim(-4, 4)
+    # # plt.title(f"Seed {seed}\n")
+    # print(i+1)
+# plt.tight_layout()
 # plt.savefig(f"MCDO/Code/DOMC/plots/MCDO_pytorch_SEEDSdifferDO{model_prob}_Reg{model_lam}_NoDoTraining.pdf")
-plt.savefig(f"MCDO/Code/DOMC/plots/MCDO_pytorch_SEEDSdifferDO{model_prob}_Reg{model_lam}_sigma{sigma}_report_paper.pdf")
+# plt.savefig(f"MCDO/Code/DOMC/plots/MCDO_pytorch_SEEDSdifferDO{model_prob}_Reg{model_lam}_sigma{sigma}_report_paper.pdf")
 # plt.show()
 
 
@@ -353,9 +360,13 @@ plt.ylabel("Y")
 # plt.savefig(f"MCDO/Code/DOMC/plots/mergedModels{model_prob}_Reg{model_lam}_NoDoTraining.pdf")
 # plt.savefig(f"MCDO/Code/DOMC/plots/mergedModels{model_prob}_Reg{model_lam}4x4.pdf")
 # plt.savefig(f"MCDO/Code/DOMC/plots/Ensemble_mergedModels{model_prob}_Reg{model_lam}_sigma{sigma}_report_seedis2.pdf")
-plt.savefig(f"MCDO/Code/DOMC/plots/Ensemble_mergedModels{model_prob}_Reg{model_lam}_sigma{sigma}ENSAMBLE.pdf")
-plt.show()
+plt.savefig(f"MCDO/Code/DOMC/plots/Ensemble_mergedModels{model_prob}_Reg{model_lam}_sigma{sigma}ENSAMBLE_0DO.pdf")
+#  plt.show()
 
+print(f"Mean MSE error: {np.array(MSEs).mean()}")
+print(f"Mean MSE error std: {np.array(MSEs).std()}")
 
+print(f"Mean MSE std error: {np.array(MSEs_std).mean()}")
+print(f"Mean MSE std error std: {np.array(MSEs_std).std()}")
 
 print("Done")

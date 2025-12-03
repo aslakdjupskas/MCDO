@@ -255,12 +255,12 @@ def main(args):
     X, Y, X_test, Y_true, _, _ = get_data(N=N, D_X=3, N_test=500, sigma_obs=0.05, gap=False, sinc_noise_bool=False, seed=0)
 
     # plt.figure()
-    # plt.subplot(1, 3, 1)
-    # plt.plot(X[:, 0], Y[:, 0], lw=2.0, label="Training Data")
-    # plt.subplot(1, 3, 2)
-    # plt.plot(X[:, 1], Y[:, 0], lw=2.0, label="Training Data")
-    # plt.subplot(1, 3, 3)
-    # plt.plot(X[:, 2], Y[:, 0], lw=2.0, label="Training Data")
+    # # plt.subplot(1, 3, 1)
+    # # plt.plot(X[:, 0], Y[:, 0], lw=2.0, label="Training Data")
+    # # plt.subplot(1, 3, 2)
+    # plt.plot(X_test[:, 1], Y_true[:, 0], lw=2.0, label="Training Data")
+    # # plt.subplot(1, 3, 3)
+    # # plt.plot(X[:, 2], Y[:, 0], lw=2.0, label="Training Data")
     # plt.show()
 
     # X_test = jnp.ones_like(X_test)
